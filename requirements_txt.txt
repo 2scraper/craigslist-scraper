@@ -1,5 +1,5 @@
 # Craigslist Scraper — Python dependencies
-# https://github.com/2captcha/craigslist-scraper
+# https://github.com/2parser/craigslist-parser
 #
 # Install all:
 #   pip install -r requirements.txt
