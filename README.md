@@ -49,8 +49,8 @@ Output is clean **JSON** or **CSV**, ready for analysis, enrichment, or storage.
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/2captcha/craigslist-scraper.git
-cd craigslist-scraper
+git clone https://github.com/2parser/craigslist-parser.git
+cd craigslist-parser
 ```
 
 ### 2. Install dependencies
@@ -75,22 +75,22 @@ npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth axios csv-w
 
 ```bash
 # Scrape all For Sale listings in New York → JSON
-python craigslist_scraper_playwright.py --city newyork --categories for_sale --format json
+python craigslist_playwright_parser.py --city newyork --categories for_sale --format json
 
 # Scrape jobs + housing in San Francisco → CSV, 5 pages each
-python craigslist_scraper_playwright.py --city sfbay --categories jobs housing --max-pages 5 --format csv
+python craigslist_playwright_parser.py --city sfbay --categories jobs housing --max-pages 5 --format csv
 
 # Search for "MacBook" across electronics
-python craigslist_scraper_playwright.py --categories electronics --query "MacBook" --format both
+python craigslist_playwright_parser.py --categories electronics --query "MacBook" --format both
 
 # With CAPTCHA bypass via 2captcha.com
-python craigslist_scraper_playwright.py --captcha-key YOUR_2CAPTCHA_API_KEY --categories cars_trucks
+python craigslist_playwright_parser.py --captcha-key YOUR_2CAPTCHA_API_KEY --categories cars_trucks
 
 # With proxy
-python craigslist_scraper_playwright.py --proxy http://user:pass@host:3128
+python craigslist_playwright_parser.py --proxy http://user:pass@host:3128
 
 # Puppeteer version (Node.js)
-node craigslist_scraper_puppeteer.js --city losangeles --categories for_sale --format json
+node craigslist_puppeteer_parser.js --city losangeles --categories for_sale --format json
 ```
 
 ---
@@ -261,7 +261,7 @@ Route traffic through your own proxy pool:
 ```bash
 --proxy http://username:password@proxy-host:3128
 ```
-Use residential proxies for maximum success rate.
+Use [2prx.com](https://2prx.com) residential proxies for maximum success rate.
 
 ---
 
@@ -329,9 +329,9 @@ or a **managed CAPTCHA solving infrastructure**, check out our services at
 
 ```
 craigslist-scraper/
-├── craigslist_scraper_playwright.py   # Playwright scraper (recommended)
-├── craigslist_scraper_selenium.py     # Selenium scraper
-├── craigslist_scraper_puppeteer.js    # Puppeteer scraper (Node.js)
+├── craigslist_playwright_parser.py   # Playwright scraper (recommended)
+├── craigslist_selenium_parser.py     # Selenium scraper
+├── craigslist_puppeteer_parser.js    # Puppeteer scraper (Node.js)
 ├── requirements.txt                   # Python dependencies
 ├── package.json                       # Node.js dependencies
 ├── output/                            # Scraped data (auto-created)
@@ -356,7 +356,7 @@ webdriver-manager>=4.0.1
 
 ## License
 
-MIT © [2captcha.com](https://2captcha.com)
+MIT © [2captcha.com](https://2parser.com)
 
 **[⭐ Star on GitHub](https://github.com/2parser/craigslist-parser)**
 · **[🐛 Report an Issue](https://github.com/2parser/craigslist-parser/issues)**
