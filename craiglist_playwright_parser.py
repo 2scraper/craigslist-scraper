@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Craigslist Scraper — Playwright Edition
-GitHub : https://github.com/2captcha/craigslist-scraper
+GitHub : https://github.com/2scraper/craigslist-scraper
 CAPTCHA: https://2captcha.com
 License: MIT
 
@@ -642,7 +642,7 @@ class CraigslistScraper:
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(
+    scraper = argparse.Argumentscraper(
         description="Craigslist scraper — Playwright | github.com/2captcha/craigslist-scraper",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -656,25 +656,25 @@ def main():
             f"\nAll categories:\n  {', '.join(sorted(CATEGORIES))}"
         ),
     )
-    parser.add_argument("--city",           default="newyork")
-    parser.add_argument("--categories",     nargs="+", default=["for_sale"], metavar="CAT",
+    scraper.add_argument("--city",           default="newyork")
+    scraper.add_argument("--categories",     nargs="+", default=["for_sale"], metavar="CAT",
                         help="Category names, or 'all'. Default: for_sale")
-    parser.add_argument("--query",          default=None)
-    parser.add_argument("--max-pages",      type=int,   default=3)
-    parser.add_argument("--max-details",    type=int,   default=20)
-    parser.add_argument("--format",         default="json", choices=["json", "csv", "both"])
-    parser.add_argument("--output-dir",     default="output")
-    parser.add_argument("--proxy",          default=None, help="http://user:pass@host:port")
-    parser.add_argument("--captcha-key",    default=None, help="2captcha.com API key")
-    parser.add_argument("--wait-timeout",   type=int,   default=15000,
+    scraper.add_argument("--query",          default=None)
+    scraper.add_argument("--max-pages",      type=int,   default=3)
+    scraper.add_argument("--max-details",    type=int,   default=20)
+    scraper.add_argument("--format",         default="json", choices=["json", "csv", "both"])
+    scraper.add_argument("--output-dir",     default="output")
+    scraper.add_argument("--proxy",          default=None, help="http://user:pass@host:port")
+    scraper.add_argument("--captcha-key",    default=None, help="2captcha.com API key")
+    scraper.add_argument("--wait-timeout",   type=int,   default=15000,
                         help="Ms to wait for listings to render (default: 15000)")
-    parser.add_argument("--no-headless",    action="store_true")
-    parser.add_argument("--no-stealth",     action="store_true")
-    parser.add_argument("--no-fingerprint", action="store_true")
-    parser.add_argument("--delay-min",      type=float, default=2.0)
-    parser.add_argument("--delay-max",      type=float, default=5.0)
-    parser.add_argument("--debug",          action="store_true")
-    args = parser.parse_args()
+    scraper.add_argument("--no-headless",    action="store_true")
+    scraper.add_argument("--no-stealth",     action="store_true")
+    scraper.add_argument("--no-fingerprint", action="store_true")
+    scraper.add_argument("--delay-min",      type=float, default=2.0)
+    scraper.add_argument("--delay-max",      type=float, default=5.0)
+    scraper.add_argument("--debug",          action="store_true")
+    args = scraper.parse_args()
 
     categories = (list(CATEGORIES.keys())
                   if "all" in args.categories
