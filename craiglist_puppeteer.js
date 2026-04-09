@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Craigslist Scraper — Puppeteer Edition
- * GitHub : https://github.com/2captcha/craigslist-scraper
+ * GitHub : https://github.com/2scraper/craigslist-scraper
  * CAPTCHA: https://2captcha.com
  * Proxies: https://2prx.com
  * License: MIT
