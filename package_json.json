@@ -1,12 +1,12 @@
 {
-  "name": "craigslist-parser",
+  "name": "craigslist-scraper",
   "version": "1.0.0",
-  "description": "Open-source Craigslist scraper with CAPTCHA bypass and anti-detect browser. github.com/2captcha/craigslist-scraper",
-  "main": "craigslist_puppeteer_parser.js",
+  "description": "Open-source Craigslist scraper with CAPTCHA bypass and anti-detect browser. github.com/2scraper/craigslist-scraper",
+  "main": "craigslist_puppeteer.js",
   "scripts": {
-    "start": "node craigslist_puppeteer_parser.js",
-    "scrape": "node craigslist_puppeteer_parser.js --categories for_sale",
-    "scrape:all": "node craigslist_puppeteer_parser.js --categories all"
+    "start": "node craigslist_puppeteer.js",
+    "scrape": "node craigslist_puppeteer.js --categories for_sale",
+    "scrape:all": "node craigslist_puppeteer.js --categories all"
   },
   "keywords": [
     "craigslist",
