@@ -2048,6 +2048,54 @@ def test_shared_constants_are_used_consistently():
     return ok
 
 
+def test_no_public_name_is_unread():
+    section("Names: nothing public that nothing reads")
+    ok = True
+    # The family's rule, run in full rather than on a hand-picked list: a
+    # public name nothing references is either dead code or unenforced policy,
+    # and the second is worse because the prose beside it reads like
+    # enforcement.
+    #
+    # "Referenced" counts its OWN module too -- a constant a module's own
+    # functions consult is doing its job. What this catches is a name nothing
+    # anywhere mentions, which is how `captcha_solver.get_balance` sat unread
+    # until this check was written.
+    sources = {}
+    for name in SHIPPED_FILES:
+        if name.endswith(".py"):
+            sources[name] = open(os.path.join(REPO_ROOT, name), encoding="utf-8").read()
+    for extra in ("tests/test_smoke.py", ".github/ci_checks.py"):
+        path = os.path.join(REPO_ROOT, extra)
+        if os.path.exists(path):
+            sources[extra] = open(path, encoding="utf-8").read()
+
+    unread = []
+    for name, src in sources.items():
+        if name.startswith((".github", "tests")):
+            continue
+        for node in ast.parse(src).body:
+            public = []
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    and not node.name.startswith("_")):
+                public.append(node.name)
+            elif isinstance(node, ast.Assign):
+                public += [t.id for t in node.targets
+                           if isinstance(t, ast.Name) and t.id.isupper()
+                           and not t.id.startswith("_")]
+            for public_name in public:
+                # Entry points are called by __main__, not by name.
+                if public_name in ("main", "parse_args", "scrape"):
+                    continue
+                uses = sum(len(re.findall(r"\b%s\b" % re.escape(public_name), text))
+                           for text in sources.values())
+                if uses <= 1:      # its own definition and nothing else
+                    unread.append("%s.%s" % (name, public_name))
+    ok &= check("every public name is read somewhere%s"
+                % ("" if not unread else ": " + ", ".join(unread[:4])),
+                not unread)
+    return ok
+
+
 def test_policy_constants_have_consumers():
     section("Policy: no constant that nothing reads")
     ok = True
@@ -2551,6 +2599,63 @@ def test_captcha():
     return ok
 
 
+def test_balance_preflight():
+    section("captcha_solver.get_balance")
+    ok = True
+    # A public helper nothing called. Given a consumer here rather than
+    # deleted, because it is the one cheap preflight for "is this key live and
+    # funded" -- and because its ERROR branch is the half nobody exercises: a
+    # wrong key returns HTTP 200 with an errorId in the body, so a client that
+    # only checks the status code reads a failure as a balance.
+    #
+    # The shapes below are real: the success one was recorded from a live call
+    # on 2026-09-14 (balance 9.1522), the failure one is what the API returns
+    # for a key it does not know.
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    calls = []
+
+    def _fake_post(url, json=None, timeout=None):
+        calls.append((url, json, timeout))
+        return _FakeResponse(_fake_post.payload)
+
+    original = captcha_solver.requests.post
+    try:
+        captcha_solver.requests.post = _fake_post
+
+        _fake_post.payload = {"errorId": 0, "balance": 9.1522}
+        ok &= check("a live key's balance is returned as a number",
+                    captcha_solver.get_balance("k") == 9.1522)
+        url, body, timeout = calls[-1]
+        # The key rides in a BODY, not a query string. That is why this
+        # endpoint is safe where the fingerprint API is not: `requests` puts
+        # the full URL, query string included, into the text of every
+        # connection error it raises.
+        ok &= check("the key is sent in the body, never in the URL",
+                    body == {"clientKey": "k"} and "k" not in url)
+        ok &= check("and the call is bounded", timeout is not None)
+
+        _fake_post.payload = {"errorId": 1, "errorCode": "ERROR_KEY_DOES_NOT_EXIST"}
+        raised = None
+        try:
+            captcha_solver.get_balance("nope")
+        except RuntimeError as exc:
+            raised = str(exc)
+        ok &= check("an errorId in a 200 response raises, naming the code",
+                    raised is not None and "ERROR_KEY_DOES_NOT_EXIST" in raised)
+    finally:
+        captcha_solver.requests.post = original
+    return ok
+
+
 # ==========================================================================
 # Runner
 # ==========================================================================
@@ -2586,6 +2691,7 @@ def main():
     ok &= test_engine_calls_bind_against_the_real_signatures()
     ok &= test_shared_constants_are_used_consistently()
     ok &= test_policy_constants_have_consumers()
+    ok &= test_no_public_name_is_unread()
     ok &= test_wording()
     ok &= test_no_file_describes_another_site()
     ok &= test_every_document_referenced_exists()
@@ -2599,6 +2705,7 @@ def main():
     ok &= test_ci_checks_is_actually_wired_up()
     ok &= test_sample_output()
     ok &= test_captcha()
+    ok &= test_balance_preflight()
     ok &= test_engines(skips)
 
     print()

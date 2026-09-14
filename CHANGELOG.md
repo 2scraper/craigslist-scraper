@@ -37,7 +37,7 @@ kept.
   slides. The walk is gap-aware: two consecutive reads with no id in common
   mean it outran its own harvest, which is counted, halves the step, and ends
   the run as PARTIAL rather than complete.
-- 642 offline checks (`python3 smoke_test.py`, or `pytest`), with fixtures cut
+- 647 offline checks (`python3 smoke_test.py`, or `pytest`), with fixtures cut
   from real captures and verified to parse identically to the untrimmed
   originals.
 - A nightly canary that needs no secret, because this site serves datacentre

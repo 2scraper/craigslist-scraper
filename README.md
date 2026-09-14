@@ -286,7 +286,7 @@ not both `complete`.
 ## Checks
 
 ```bash
-python3 smoke_test.py     # 642 checks, no network, no browser
+python3 smoke_test.py     # 647 checks, no network, no browser
 pytest                    # the same suite, wrapped
 ```
 
