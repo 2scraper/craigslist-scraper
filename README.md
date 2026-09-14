@@ -108,9 +108,22 @@ worker is only useful if it can be handed an address of its own.
 
 **One URL tops out at exactly 10,000 results.** Walked to exhaustion, the list
 yields 10,000 distinct ids and then the counter stops. To go further, narrow
-the URL — the site honours `&min_price=`/`&max_price=`, `&query=`,
-`&postedToday=1`, `&hasPic=1` and subarea slugs as real server-side
-parameters, each returning a different set — and run each separately.
+the URL: the site honours its own filters as real server-side parameters, so
+each narrowed URL is independently fetchable. Measured on one base URL, same
+minute:
+
+| query | results in the served response |
+|---|---|
+| none | 294 |
+| `&min_price=0&max_price=25` | 342 |
+| `&min_price=26&max_price=100` | 313 |
+| `&postedToday=1` | 356 |
+| `&query=bike` | 293 |
+| `&hasPic=1` | 330 |
+
+Subarea slugs (`/search/subarea/lgi?cat=sss`) partition it too. This is also
+how you parallelise a large job — one run per narrowed URL — since
+`--concurrency` cannot help inside a single run.
 
 **Whole categories publish no structured data.** Jobs, services and community
 ship no JSON-LD `ItemList` at all; housing ships one with no prices in it.
