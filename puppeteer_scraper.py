@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
 """
-tokopedia-scraper — pyppeteer edition (secondary engine)
-=====================================================
+craigslist-scraper -- pyppeteer edition (secondary engine)
+==========================================================
 
 The same scrape as playwright_scraper.py, driven through pyppeteer. It must
 agree with its twins on exit codes, run status, and whether a run crashes or
-spends money — the decisions that determine all three live in page_flow.py
+spends money -- the decisions that determine all three live in page_flow.py
 and output_writer.finish_run(), so this file is browser plumbing and nothing
 else.
 
-    --mode listing   (default)  category grids and search results
-    --mode product              one /product/ page, with brand, EAN,
-                                description and the full image list
+    --mode listing   (default)  a result list
+    --mode posting              one /view/d/{slug}/{token} advert
 
-Two things to know before choosing this engine:
+pyppeteer is effectively unmaintained and its own README points at
+Playwright. It is here for parity, and because it CAN do the one thing
+Selenium cannot: authenticate a proxy and an authenticated remote CDP
+endpoint. Prefer playwright_scraper.py.
 
-  * **pyppeteer is effectively unmaintained** and its own README points at
-    Playwright. It is here for parity, and for anyone who already has it.
-  * **No --concurrency.** The Playwright engine is the one that fetches pages
-    in parallel; the flag is accepted here and reported as ignored rather
-    than silently doing nothing.
+There is no --concurrency here, and on this site there is none anywhere: no
+batch of a Craigslist listing has an address of its own.
 
 Usage
 -----
     python puppeteer_scraper.py \\
-        --url "https://www.tokopedia.com/p/makanan-minuman/minuman/kopi-bubuk" --pages 3
+        --url "https://www.craigslist.org/search/area/newyork?cat=sss" --pages 3
 
 Requires: pip install -r requirements.txt -r requirements-puppeteer.txt
-          (pyppeteer downloads its own Chromium on first run)
+          pyppeteer downloads its own Chromium on first run.
 """
 
 import argparse
@@ -76,7 +75,7 @@ logger = logging.getLogger("puppeteer_scraper")
 ITEM_LINK_SELECTOR = page_flow.READY_SELECTOR_LISTING
 
 # The lowest PRICE coverage that is still healthy, per page kind. Not a
-# structured-price confirmation share: a Tokopedia listing page carries no
+# share of rows that got a price at all -- 95%-100% across 14 captures. A
 # structured data at all (0 JSON-LD, 0 __NEXT_DATA__, 0 Apollo state on six
 # captures), so `price_source` is "dom" on every listing row and there is
 # nothing for a confirmation threshold to describe. What IS worth a floor is
@@ -86,7 +85,7 @@ PRICE_FLOOR = 90
 ENRICHMENT_FLOOR = 60
 
 # A page holding less than this share of the fullest page in the same run is
-# reported as thin. Tokopedia's page size is steady (60 tiles on both
+# reported as thin. There is no fixed batch size here (41 entries on the
 # category pages captured), but the LAST page of a listing is legitimately
 # short, so the bar stays loose.
 THIN_PAGE_SHARE = 0.5
@@ -116,6 +115,7 @@ class _AsyncBridge:
     """
 
     def __init__(self):
+        self.closing = False
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._serve, daemon=True,
                                         name="pyppeteer-loop")
@@ -131,11 +131,10 @@ class _AsyncBridge:
         # failed run. Only that shape is swallowed; anything else still gets
         # the default handler, because silencing the loop wholesale would hide
         # real faults.
-        self.loop.set_exception_handler(self._on_loop_exception)
+        self.loop.set_exception_handler(self._on_loop_exception)  # see below
         self.loop.run_forever()
 
-    @staticmethod
-    def _on_loop_exception(loop, context):
+    def _on_loop_exception(self, loop, context):
         # BOTH, not one or the other. asyncio puts its own words in
         # `message` ("Future exception was never retrieved") and the library's
         # in `exception` (a NetworkError about a closed CDP session), and an
@@ -155,8 +154,23 @@ class _AsyncBridge:
                 # this site had their target closed mid-scroll and succeeded
                 # on the next attempt.
                 "No session with given id",
+                # A connect that timed out leaves pyppeteer's websocket reader
+                # holding the failure nobody will ever read: the run already
+                # got its own TimeoutError through the bridge and reported
+                # exit 5. Printing the same failure again, as a traceback,
+                # under an error message that already explained it, is how a
+                # readable diagnosis turns into noise.
+                "Task exception was never retrieved",
+                "CancelledError",
                 "Event loop is closed")):
             logger.debug("Ignoring teardown noise from pyppeteer: %s", message)
+            return
+        if self.closing:
+            # Everything after teardown begins is teardown. The run's own
+            # result is already decided by then, so nothing printed here can
+            # change it -- it can only mislead.
+            logger.debug("Ignoring post-teardown noise from pyppeteer: %s",
+                         message)
             return
         loop.default_exception_handler(context)
 
@@ -182,18 +196,42 @@ class _AsyncBridge:
         Cancelling first is the fix, and it has to happen ON the loop thread —
         `call_soon_threadsafe` is what gets it there.
         """
-        def _cancel_and_stop():
+        async def _drain():
+            """Cancel what is in flight and WAIT for it, then stop the loop.
+
+            Cancelling without waiting is not enough, and the difference is
+            visible in the log rather than in the data. pyppeteer's websocket
+            reader reacts to its cancellation by closing the connection, which
+            is itself async: if the loop stops first, that close runs against
+            a dead loop and Python prints "Exception ignored in: <coroutine
+            Connection._recv_loop>", "no running event loop" and "Event loop
+            is closed" AFTER a run has already written its output and printed
+            its results.
+
+            The run is fine in every case; the log is what is wrong, and a log
+            that ends in three tracebacks under a successful run is how a
+            reader learns to stop reading it.
+
+            Bounded, because teardown must not be able to hang a run that has
+            already produced its answer.
+            """
             pending = [t for t in asyncio.all_tasks(self.loop)
-                       if t is not asyncio.current_task(self.loop)]
+                       if t is not asyncio.current_task()]
             for task in pending:
                 task.cancel()
             if pending:
-                logger.debug("Cancelled %d pending pyppeteer task(s) on "
+                logger.debug("Cancelling %d pending pyppeteer task(s) on "
                              "teardown.", len(pending))
+                try:
+                    await asyncio.wait(pending, timeout=3)
+                except Exception as e:  # noqa: BLE001 -- teardown only
+                    logger.debug("Ignoring teardown error while draining: %s", e)
             self.loop.stop()
 
-        self.loop.call_soon_threadsafe(_cancel_and_stop)
-        self._thread.join(timeout=5)
+        self.closing = True
+        self.loop.call_soon_threadsafe(
+            lambda: self.loop.create_task(_drain()))
+        self._thread.join(timeout=8)
 
 
 @dataclass
@@ -206,7 +244,7 @@ class PageOutcome:
     blocked_by: Optional[str] = None
     load_failed: bool = False
     state: Optional[str] = None
-    # Always None on this site: Tokopedia publishes no result total. Kept so
+    # Present only on a run that let the application paint. Kept so
     # the sidecar's shape matches the family's.
     total_available: Optional[int] = None
     # The raw result-count header, verbatim, for the sidecar.
@@ -214,11 +252,7 @@ class PageOutcome:
     # What the lazy-load scroll did, and crucially whether it SETTLED. A page
     # whose grid was still growing when the budget ran out is partial, and a
     # run that reported it as complete would read as a shrinking catalogue.
-    scroll: Optional[dict] = None
-    # In --mode product, the seller's own id/name/slug from the page's Apollo
-    # cache. Stored as the small dict rather than by keeping the page's HTML
-    # around: a detail page is 285 KB and a scrolled listing nearly 1 MB.
-    shop_facts: Optional[dict] = None
+    walk: Optional[dict] = None
 
     @property
     def ok(self) -> bool:
@@ -272,6 +306,16 @@ class _Session:
         self.bridge, self.args, self.pool = bridge, args, pool
         self.remote = bool(args.cdp_endpoint)
         self.browser = self.page = None
+        # Whether this session runs the site's own application.
+        #
+        # A single-batch listing run does NOT, and on this site that is what
+        # KEEPS the data: Craigslist serves a complete result list and its own
+        # script removes it about twenty seconds later, replacing it with a
+        # virtualised grid of 200 recycled nodes. With JavaScript off the list
+        # stays and the hydration wait is not paid. The browser still does all
+        # the fetching -- TLS, headers, cookies, the proxy.
+        self.javascript = (args.mode == "listing"
+                           and page_flow.javascript_needed(args.pages))
 
     def open(self):
         if self.remote:
@@ -281,10 +325,39 @@ class _Session:
             # form and authenticates on the WebSocket upgrade, so an
             # authenticated Scraping Browser endpoint works here — unlike
             # Selenium's debuggerAddress, which has nowhere to put a password.
-            self.browser = self.bridge.run(
-                connect(browserWSEndpoint=self.args.cdp_endpoint,
-                        ignoreHTTPSErrors=True), timeout=CONNECT_TIMEOUT)
+            try:
+                self.browser = self.bridge.run(
+                    connect(browserWSEndpoint=self.args.cdp_endpoint,
+                            ignoreHTTPSErrors=True), timeout=CONNECT_TIMEOUT)
+            except Exception as e:  # noqa: BLE001 -- see below
+                # Caught broadly ON PURPOSE, and re-raised with the endpoint
+                # NAMED. Two things were wrong without this, both found by
+                # running the paid path rather than by reading it:
+                #
+                # The bridge's own timeout raises a bare TimeoutError whose
+                # text is "pyppeteer call did not return within 30s" -- which
+                # matches neither marker the handler at the bottom of this
+                # file looks for, so a locked profile escaped as an unhandled
+                # traceback and exit 1. A harness seeing exit 1 goes looking
+                # for a bug in the scraper instead of waiting or passing a
+                # different pid. The twin engine reports exit 5 for the same
+                # condition, and the three must agree.
+                #
+                # And pyppeteer, like Playwright, puts the endpoint into its
+                # exception text -- and the endpoint is a URL with a password
+                # in it. Masked here, with host and port kept: WHICH endpoint
+                # failed is the useful half and is not the secret.
+                raise RuntimeError(
+                    f"could not connect to --cdp-endpoint "
+                    f"{_mask_credentials(self.args.cdp_endpoint)}: "
+                    f"{_mask_credentials(str(e))}\n"
+                    f"A Scraping Browser profile allows ONE live connection "
+                    f"at a time, so this usually means another run still "
+                    f"holds this `pid`. Wait for it to finish, or use a "
+                    f"different pid."
+                ) from None
             self.page = self.bridge.run(self.browser.newPage())
+            self._apply_javascript()
             return self
 
         launch_args = ["--no-sandbox", "--disable-dev-shm-usage"]
@@ -321,7 +394,24 @@ class _Session:
         if credentials:
             self.bridge.run(self.page.authenticate(
                 {"username": credentials[0], "password": credentials[1]}))
+        self._apply_javascript()
         return self
+
+    def _apply_javascript(self):
+        """Switch the site's application off when this run does not need it.
+
+        pyppeteer can do this PER PAGE, which is the one place it beats both
+        twins here: Playwright needs a fresh context (so it cannot do it over
+        a reused remote profile) and Selenium needs a launch-time profile
+        preference (so it cannot do it over an attached browser at all). Here
+        it works on the remote path too.
+        """
+        if self.javascript:
+            return
+        self.bridge.run(self.page.setJavaScriptEnabled(False))
+        logger.info("JavaScript is off for this run: one batch comes from the "
+                    "served result list, which the site's own script would "
+                    "otherwise remove before it can be read.")
 
     def relaunch(self):
         if self.remote:
@@ -369,30 +459,37 @@ def _driver(session):
     def current_url():
         return page.url
 
-    def page_height():
-        try:
-            return int(bridge.run(page.evaluate(
-                "() => document.body.scrollHeight")))
-        except Exception:  # noqa: BLE001 — a missing height is not fatal
-            return None
-
-    def scroll_to_bottom():
-        # Scroll to the document's own bottom, not a fixed wheel distance: a
-        # fixed distance falls behind a page that grows as it loads, and
-        # Tokopedia's grid went 1606 -> 3730 -> 8157px across two rounds.
+    def scroll_by(px):
+        # A BOUNDED wheel, deliberately not a jump to the document's bottom.
+        # The family's rule is the opposite and it is right for a lazy-loading
+        # grid that grows as it loads. Craigslist's list is virtualised: its
+        # container's height is pre-computed for all 10,000 items, so one jump
+        # to scrollHeight lands on item 9,997 -- 700 ids collected, and then
+        # the page passes every readiness test the usual rule prescribes.
         try:
             bridge.run(page.evaluate(
-                "() => window.scrollTo(0, document.body.scrollHeight)"))
+                "(px) => window.scrollBy(0, px)", px))
         except Exception:  # noqa: BLE001
             pass
 
-    # The scroll primitives are NAMED OPERATIONS rather than JavaScript
-    # crossing the page_flow boundary: pyppeteer takes `() => expr` while
-    # Selenium takes a function body with an explicit `return`, so a shared
-    # module passing JS would acquire one driver's dialect.
+    def text(selector):
+        # The first match's text, or None -- used for the site's own
+        # "1 - 6 of 10,000+" counter, which is what the walk's stall check
+        # reads instead of DOM churn.
+        try:
+            el = bridge.run(page.querySelector(selector))
+            if el is None:
+                return None
+            return bridge.run(page.evaluate("(e) => e.innerText", el))
+        except Exception:  # noqa: BLE001
+            return None
+
+    # These are NAMED OPERATIONS rather than JavaScript crossing the page_flow
+    # boundary: pyppeteer takes `() => expr` while Selenium takes a function
+    # body with an explicit `return`, so a shared module passing JS would
+    # acquire one driver's dialect.
     return {"count": count, "sleep": sleep, "content": content,
-            "current_url": current_url, "page_height": page_height,
-            "scroll_to_bottom": scroll_to_bottom}
+            "current_url": current_url, "scroll_by": scroll_by, "text": text}
 
 
 def _content(session) -> Optional[str]:
@@ -404,8 +501,8 @@ def _parse_for_mode(html: str, url: str, args, page_num: int = 1) -> List:
     # restarts at 1 on every page, so without the page number beside it a
     # row from page 2 claims the same position as one from page 1. Mirrors
     # playwright_scraper._parse_for_mode exactly.
-    if args.mode == "product":
-        row = parse_product_page(html, url, category=args.category)
+    if args.mode == "posting":
+        row = parse_posting(html, url, category=args.category)
         return [row] if row is not None else []
     return parse_products(html, url, page=page_num, category=args.category)
 
@@ -570,10 +667,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # shell with no grid in it — classified naively that is "unknown",
         # and "unknown" retries. Wait for the anchor and re-classify BEFORE
         # the retry decision. Mirrors playwright_scraper exactly; see
-        # page_flow.is_unpainted.
-        if page_flow.is_unpainted(state, html):
+        # page_flow.should_wait.
+        if page_flow.should_wait(state):
             wait_timeout = page_flow.content_timeout_ms(args.mode)
-            logger.info("Page %d is a shell Tokopedia served but has not "
+            logger.info("Batch %d is a page Craigslist served whose results "
                         "painted (%d bytes, no grid) — waiting up to %.0fs "
                         "for the grid rather than spending a retry.",
                         page_num, len(html), wait_timeout / 1000)
@@ -588,7 +685,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             state = page_flow.classify(html, url=page.url)
 
         # No interstitial-settling step, and its absence is measured rather
-        # than an omission: Tokopedia has no interstitial. An address it has
+        # than an omission: 22 captures carry no interstitial at all. An
         # scored gets the HTTP/2 stream reset with no markup at all, so there
         # is nothing to wait out. See page_flow's "There is no block page".
         #
@@ -638,7 +735,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     outcome.state = state
 
     if state == "blocked":
-        # There is no challenge on this site to solve. Tokopedia sends an
+        # There is no challenge on this site to solve. Craigslist sends an
         # address it has scored NOTHING — no status code, no interstitial, no
         # vendor marker — so a 2Captcha key does not help and a residential
         # exit does. The dump is written even when empty: "0 bytes" is itself
@@ -648,68 +745,110 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         with open(debug_html, "w", encoding="utf-8") as f:
             f.write(html or "")
         logger.error(
-            "Tokopedia did not serve this request — %d bytes, %s the site's "
+            "This response was not a Craigslist page -- %d bytes, %s the site's "
             "own asset host, saved to %s. There is no challenge to solve. "
             "What clears it, measured 2026-09-10: a residential exit, and the "
             "country does not matter (an Indonesian and a US residential exit "
             "returned identical pages) — a datacentre address gets nothing. "
             "This is exit 3, distinct from a genuinely empty result (exit 4).",
             len(html or ""),
-            "which references" if served_by_tokopedia(html or "")
+            "which references" if served_by_craigslist(html or "")
             else "with no reference to", debug_html)
         outcome.blocked_by = "no-response" if not html else "not-served"
         outcome.final_url = d["current_url"]()
         return outcome
 
 
+    walked_rows = []
+    walked_seen = set()
+
     if state == "content":
-        # Wait for paint, then SCROLL — and on this site the scroll is not an
-        # optimisation. Tokopedia paints nothing on the first response
-        # (links=0 at round 0 on every capture) and hydrates 60 tiles at a
-        # time from client-side GraphQL, so without it a listing run returns
-        # whatever the first batch happened to have painted: 11 tiles against
-        # 95 after one scroll on the measured search URL.
+        # The served list is already in `html`, captured right after
+        # navigation. It is the COMPLETE first batch, with the page's own
+        # JSON-LD aligned onto it, and it is what a single-batch run returns.
+        #
+        # Hold a reference before anything else: with JavaScript running, the
+        # application removes that list about twenty seconds in and paints a
+        # virtualised grid in its place.
+        served_html = html
+
         selector = page_flow.ready_selector(args.mode)
         threshold = page_flow.min_matches(args.mode)
-        # A POLL, not waitForFunction. Tokopedia's CSP has no `unsafe-eval`;
-        # see page_flow.wait_for_count.
+        js = args.mode == "listing" and page_flow.javascript_needed(args.pages)
+        # A POLL, not waitForFunction: that hands the browser a STRING to
+        # evaluate, which a strict Content-Security-Policy refuses. See
+        # page_flow.wait_for_count.
         found = page_flow.wait_for_count(
             d["count"], d["sleep"], selector, threshold,
-            page_flow.content_timeout_ms(args.mode))
-        time.sleep(0.5)
-        if found <= threshold:
-            # Not an error on its own, and what it MEANS depends on the
-            # mode — which is why the message does too. A listing page with
-            # no grid is a correct answer (a taxonomy hub, or one page past
-            # the end); a detail page whose buy box never painted is a
-            # different thing entirely, and on this site it is usually just
-            # slow rather than absent, because the row is parsed out of the
-            # page's JSON-LD and not out of the buy box.
-            if args.mode == "product":
-                logger.info("The product name did not paint in time. That is "
-                            "not fatal: a detail row is read from the page's "
-                            "own Apollo cache and its price meta, both in the "
-                            "first response, so the parse below decides.")
+            page_flow.content_timeout_ms(args.mode, js=js))
+        if found < threshold:
+            if args.mode == "posting":
+                logger.info("The advert's body did not appear in time. A "
+                            "posting page is server-rendered on every category "
+                            "measured, so this is unusual rather than slow; "
+                            "the parse below decides.")
             else:
-                logger.info("No listing tiles appeared in time. If this URL "
-                            "is a /p/<slug> discovery hub or one page past "
-                            "the end of a listing, that is the expected "
-                            "answer and the run will report 0 rows (exit 4).")
+                logger.info("Fewer than %d result entries appeared in time. If "
+                            "this URL's query matches nothing, that is the "
+                            "expected answer and the run reports 0 rows "
+                            "(exit 4).", threshold)
 
-        if args.mode != "product":
-            outcome.scroll = page_flow.scroll_until_settled(
-                count=d["count"], page_height=d["page_height"],
-                scroll_to_bottom=d["scroll_to_bottom"], sleep=d["sleep"],
-                selector=selector)
-            if not outcome.scroll["settled"]:
+        if args.mode == "listing" and args.pages > 1:
+            currency = page_currency(served_html)
+            logger.info("Walking the virtualised list for batches 2-%d. The "
+                        "currency for those rows is read once, here (%s): the "
+                        "page's own JSON-LD is itself virtualised.",
+                        args.pages, currency or "none published")
+            page_flow.wait_for_count(d["count"], d["sleep"],
+                                     SELECTORS["rendered_card"],
+                                     page_flow.MIN_CARD_MATCHES,
+                                     page_flow.CONTENT_TIMEOUT_MS_HYDRATED)
+
+            def _harvest():
+                """Read the cards on screen now, and say which ones they were.
+
+                The returned set is what lets the walk notice it has outrun
+                itself: two consecutive reads with no id in common mean the
+                window jumped a stretch that will never be read, because the
+                nodes behind it are already recycled.
+                """
+                snapshot = d["content"]()
+                if not snapshot:
+                    return set()
+                seen_now = set()
+                for row in parse_rendered_cards(
+                        snapshot, d["current_url"](), category=args.category,
+                        currency=currency):
+                    if not row.sku:
+                        continue
+                    seen_now.add(row.sku)
+                    if row.sku not in walked_seen:
+                        walked_seen.add(row.sku)
+                        walked_rows.append(row)
+                return seen_now
+
+            outcome.walk = page_flow.walk_virtualised(
+                count=d["count"], text=d["text"], scroll_by=d["scroll_by"],
+                sleep=d["sleep"], harvest=_harvest,
+                want_items=args.pages * page_flow.BATCH_HINT)
+            outcome.walk["harvested"] = len(walked_rows)
+            logger.info("The walk reached position %d in %d step(s) and "
+                        "harvested %d distinct row(s).",
+                        outcome.walk["counter_reached"], outcome.walk["steps"],
+                        len(walked_rows))
+            if outcome.walk["gaps"]:
                 logger.warning(
-                    "The grid was still growing after %d scroll rounds (%d "
-                    "cards, height %s) — this page is PARTIAL. Its row count "
-                    "is a floor, not the listing.",
-                    outcome.scroll["rounds"], outcome.scroll["cards"],
-                    outcome.scroll["height"])
+                    "The walk outran its harvest %d time(s), so stretches of "
+                    "the list went by unread and this run is PARTIAL. Its row "
+                    "count is a floor.", outcome.walk["gaps"])
+            if outcome.walk["counter_reached"] >= RESULT_CAP:
+                logger.warning(
+                    "This URL hit Craigslist's %d-result ceiling -- the site's "
+                    "limit for ONE address, not the size of the catalogue. "
+                    "Narrow the URL with the site's own filters and run each "
+                    "separately.", RESULT_CAP)
 
-        html = d["content"]() or html
+        html = served_html
 
     if args.dump_html:
         dump_path = (args.dump_html if args.pages == 1
@@ -742,16 +881,27 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         return outcome
 
     products = _parse_for_mode(html, page.url, args, page_num)
-    logger.info("Parsed %d row(s) from page %d.", len(products), page_num)
-
-    if args.mode == "product":
-        outcome.shop_facts = shop_metadata(html, page.url)
+    if walked_rows:
+        # Batch 1 came from the served list, complete and enriched; the walk's
+        # rows come from the rendered grid and carry less, which is what
+        # `price_source` records. Duplicates are dropped by the run's dedupe
+        # after the merge, in page order -- not here, because doing it in two
+        # places is how the two disagree.
+        first_skus = {r.sku for r in products if r.sku}
+        fresh = [r for r in walked_rows if r.sku not in first_skus]
+        logger.info("The walk added %d row(s) beyond the served list's %d.",
+                    len(fresh), len(products))
+        for i, row in enumerate(fresh, start=1):
+            row.page = 2 + (i - 1) // max(len(products), 1)
+            row.position = 1 + (i - 1) % max(len(products), 1)
+        products = products + fresh
+    logger.info("Parsed %d row(s) from batch %d.", len(products), page_num)
 
     if args.mode == "listing" and page_num == 1:
-        # Tokopedia publishes NO result total — its search header reads
-        # "Menampilkan 1 - 60 barang dari total  untuk …" with the total
-        # EMPTY — so there is no arithmetic completeness check here. The
-        # header is recorded verbatim instead.
+        # The served markup publishes NO result total; the rendered header
+        # says "of 10,000+", which is the ceiling one URL can be walked to
+        # rather than a count of the catalogue. So there is no arithmetic
+        # completeness check here, and the header is recorded verbatim.
         outcome.total_available = total_results(html, shown=len(products))
         outcome.header = search_header(html)
         if outcome.header:
@@ -760,27 +910,53 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     if products and args.mode == "listing":
         priced = sum(1 for p in products if p.price is not None)
         share = 100.0 * priced / len(products)
-        kind = listing_kind(page.url)
-        floor = PRICE_FLOOR.get(kind, 0)
-        logger.info("Price coverage on page %d (%s page): %d/%d (%.0f%%); the "
-                    "floor for this page kind is %d%%.",
-                    page_num, kind, priced, len(products), share, floor)
-        if share < floor:
+        logger.info("Price coverage on batch %d: %d/%d (%.0f%%); the measured "
+                    "floor is %d%%.", page_num, priced, len(products), share,
+                    PRICE_FLOOR)
+        if share < PRICE_FLOOR:
             logger.warning(
-                "Only %.0f%% of page %d carries a price, against a measured "
-                "floor of %d%% for a %s page. All 310 rows across the four "
-                "captured listing pages had one, so this is the read breaking "
-                "rather than the page being unusual.", share, page_num,
-                floor, kind)
+                "Only %.0f%% of batch %d carries a price, against a floor of "
+                "%d%% measured across 14 captures where the lowest was 95%%. "
+                "That is the read breaking rather than the listing being "
+                "unusual.", share, page_num, PRICE_FLOOR)
 
-        # No structured-price confirmation share, and its absence is measured:
-        # a Tokopedia listing page has no structured data to confirm against.
-        # What IS worth reporting is how much of the grid had painted its
-        # images, the one column this site makes sparse on purpose.
+        # How much of this batch the page's own structured data covered.
+        # Measured against the rows that COULD carry it: a walked row comes
+        # from a rendered card, which publishes none, so including those would
+        # make the share fall as the walk succeeds.
+        eligible = [p for p in products
+                    if p.price_source in ("jsonld", "static")]
+        enriched = sum(1 for p in eligible if p.price_source == "jsonld")
+        if enriched and eligible:
+            enrich_share = 100.0 * enriched / len(eligible)
+            logger.info("Structured-data coverage on the served batch: %d/%d "
+                        "(%.0f%%). Measured range across captures: 66%% "
+                        "(paris) to 99%% (toronto).", enriched, len(eligible),
+                        enrich_share)
+            if enrich_share < ENRICHMENT_FLOOR:
+                logger.warning(
+                    "Structured coverage is %.0f%%, below the %d%% floor. A "
+                    "low share can mean the served list and the JSON-LD were "
+                    "rejected as misaligned, which is on purpose when the two "
+                    "views disagree.", enrich_share, ENRICHMENT_FLOOR)
+        else:
+            logger.info("This listing published no structured data -- normal "
+                        "for jobs, services and community, which ship no "
+                        "JSON-LD ItemList at all.")
+
+        with_geo = sum(1 for p in products if p.latitude is not None)
+        logger.info("Coordinates on batch %d: %d/%d. Craigslist publishes "
+                    "(0,0) as its placeholder outside North America and this "
+                    "parser reports those as null.",
+                    page_num, with_geo, len(products))
+
+        # Images are sparse on purpose: the site serves its own
+        # `/images/d/<pid>/empty.png` placeholder for an advert with no
+        # photograph, and this parser reports that as null rather than as a
+        # URL. A column that is 100% populated and half placeholder is worse
+        # than one that is honestly sparse.
         with_image = sum(1 for p in products if p.image_url)
-        logger.info("Loaded product images on page %d: %d/%d (%.0f%%). "
-                    "Tokopedia lazy-loads them; a tile that never scrolled "
-                    "into view carries a placeholder, reported as null.",
+        logger.info("Images on batch %d: %d/%d (%.0f%%).",
                     page_num, with_image, len(products),
                     100.0 * with_image / len(products))
 
@@ -820,7 +996,7 @@ def scrape(args) -> int:
     # single-page made `--mode shop --pages 2` fetch one page and report
     # "complete", which is the silent-success failure this family exists to
     # avoid. Found on the first live shop run.
-    stop_reason = "single_page_mode" if args.mode == "product" else "completed"
+    stop_reason = "single_page_mode" if args.mode == "posting" else "completed"
 
     pool = proxy_pool_from_args(args)
     if pool and args.cdp_endpoint:
@@ -846,67 +1022,20 @@ def scrape(args) -> int:
                            else f"blocked_{first.blocked_by}")
             blocked = first.blocked_by is not None
         elif args.mode == "listing":
+            # ONE fetch is the whole run on this site. Every batch after the
+            # first lives in the SAME document, reached by walking the
+            # virtualised list -- `?page=` and `?s=` return this document byte
+            # for byte -- so `_fetch_one_page` does the walk internally and
+            # what comes back already spans the run.
             seen_keys.update(p.sku for p in first.products if p.sku is not None)
+            walk = first.walk or {}
+            if args.pages > 1 and not walk:
+                stop_reason = "walk_did_not_start"
+            elif walk.get("gaps"):
+                stop_reason = "walk_gaps"
+            elif walk.get("hit_cap"):
+                stop_reason = "result_cap_reached"
 
-            # Same check as the Playwright engine: the ?page=N convention is
-            # only used when the site's own link agrees with it, so a cursor
-            # or token in pagination cannot be silently papered over.
-            planned = None
-            if args.pages > 1:
-                page_one = first.final_url or args.url
-                constructed = page_url(page_one, 2)
-                candidates = _next_page_candidates(session, 1)
-                if candidates and not page_flow.pagination_agrees(
-                        page_one, 1, candidates):
-                    logger.info("The site's own next-page link (%s) is not "
-                                "what the page convention would build (%s) — "
-                                "following its links one page at a time.",
-                                candidates[0], constructed)
-                else:
-                    if not candidates:
-                        logger.info(
-                            "No pagination link for page 2 was found on page "
-                            "1 — using the URL convention. That is EXPECTED "
-                            "on this site: Tokopedia publishes no rel=next "
-                            "anywhere, and ?page=N addresses every page "
-                            "correctly.")
-                    planned = [page_url(page_one, n)
-                               for n in range(2, args.pages + 1)]
-
-            first_candidates = _next_page_candidates(session, 1)
-            url = (planned[0] if planned else
-                   (first_candidates[0] if first_candidates
-                    else page_url(session.page.url, 2)))
-            for page_num in range(2, args.pages + 1):
-                if pool and pool.rotates_per_page():
-                    pool.advance(f"per-page rotation, page {page_num}")
-                    session.relaunch()
-
-                outcome = _fetch_one_page(session, args, pool, page_num, url)
-                outcomes.append(outcome)
-                if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
-                    blocked = outcome.blocked_by is not None
-                    break
-
-                fresh_count = sum(1 for p in outcome.products
-                                  if p.sku is None or p.sku not in seen_keys)
-                seen_keys.update(p.sku for p in outcome.products
-                                 if p.sku is not None)
-                if not fresh_count:
-                    logger.info("Page %d added no rows not already seen — "
-                                "treating that as the end of the listing.",
-                                page_num)
-                    stop_reason = "no_new_products"
-                    break
-
-                if page_num < args.pages:
-                    nxt = _next_page_candidates(session, page_num)
-                    url = (planned[page_num - 1] if planned else
-                           (nxt[0] if nxt
-                            else page_url(session.page.url, page_num + 1)))
-                    time.sleep(args.delay)
     finally:
         if session is not None:
             session.close()
@@ -926,7 +1055,7 @@ def scrape(args) -> int:
     # where a short page hides.
     #
     # NOT "pages x rows-per-page", which is what the sibling repo does and
-    # what fires on healthy runs here. Tokopedia's page size VARIES:
+    # what fires on healthy runs here. There is no fixed batch size:
     # a three-page run returned 62, 60 and 62 rows, and multiplying the
     # largest page by the page count then declared the run short by 8. A
     # threshold that warns on every healthy run teaches the reader to ignore
@@ -973,27 +1102,16 @@ def scrape(args) -> int:
     # in --mode listing, because on an infinitely-scrolling site those are
     # what say how much of the listing the run actually saw.
     extra = None
-    if args.mode == "product":
-        first = next((o for o in outcomes if o.ok and o.shop_facts), None)
-        if first is not None and first.shop_facts:
-            extra = dict(first.shop_facts)
-            logger.info("Shop: %s (id %s, /%s).",
-                        extra.get("shop_name") or "?",
-                        extra.get("shop_id") or "?",
-                        extra.get("shop_slug") or "?")
-    else:
-        scrolls = {o.page_num: o.scroll for o in outcomes if o.scroll}
-        headers = {o.page_num: o.header for o in outcomes if o.header}
-        unsettled = sorted(n for n, s in scrolls.items()
-                           if s and not s.get("settled"))
-        if scrolls or headers:
-            extra = {"scroll": scrolls, "result_header": headers,
-                     "pages_still_growing": unsettled}
-        if unsettled:
-            logger.warning(
-                "Page(s) %s were still loading more products when the scroll "
-                "budget ran out, so their row counts are floors rather than "
-                "the listing.", ", ".join(str(n) for n in unsettled))
+    walks = {o.page_num: o.walk for o in outcomes if o.walk}
+    headers = {o.page_num: o.header for o in outcomes if o.header}
+    if walks or headers:
+        extra = {"walk": walks, "result_header": headers}
+    capped = [n for n, w in walks.items() if w and w.get("hit_cap")]
+    if capped:
+        logger.warning(
+            "The walk hit Craigslist's %d-result ceiling on batch(es) %s, so "
+            "this run's row count is a floor. That ceiling is per ADDRESS.",
+            RESULT_CAP, ", ".join(str(n) for n in capped))
 
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
@@ -1006,33 +1124,45 @@ def scrape(args) -> int:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Tokopedia scraper (pyppeteer edition). pyppeteer is "
+        description="Craigslist scraper (pyppeteer edition). pyppeteer is "
                     "effectively unmaintained — playwright_scraper.py is the "
                     "primary engine.")
     p.add_argument("--url", default=None,
-                   help="Tokopedia URL: /search?st=product&q=..., "
-                        "/p/<cat>/<sub>/<subsub>, or /{shop}/{slug} with "
-                        "--mode product. Required, unless TOKOPEDIA_URL is "
-                        "set in the environment or in .env.")
-    p.add_argument("--mode", choices=["listing", "product"],
+                   help="Craigslist URL: /search/area/{slug}?cat=..., "
+                        "/search/subarea/{slug}?cat=..., or "
+                        "/view/d/{slug}/{token} with --mode posting. ONE "
+                        "hostname worldwide -- the area is a path segment. "
+                        "Required, unless CRAIGSLIST_URL is set in the "
+                        "environment or in .env.")
+    p.add_argument("--mode", choices=["listing", "posting"],
                    default="listing",
-                   help="listing (default) or product. product reads one "
-                        "/{shop}/{slug} page out of its own Apollo cache and "
-                        "adds the site's real product id, the EXACT sold "
-                        "count, the review count, the condition and the "
-                        "shipping weight — the columns a listing row cannot "
-                        "carry. No --pages in product mode. There is "
-                        "deliberately no shop mode; see playwright_scraper.")
-    p.add_argument("--category", default=None, help="Label to tag output rows with.")
-    p.add_argument("--pages", type=int, default=1, help="Listing pages to crawl")
+                   help="listing (default) or posting. posting reads one "
+                        "/view/d/{slug}/{token} advert and adds the body "
+                        "text, the attribute bag, every image, both "
+                        "timestamps and Craigslist's classic numeric post id "
+                        "-- the columns a listing row cannot carry. No "
+                        "--pages in posting mode.")
+    p.add_argument("--category", default=None,
+                   help="Label to tag output rows with. Defaults to the "
+                        "`cat=` code from the URL, named where measured.")
+    p.add_argument("--pages", type=int, default=1,
+                   help="How many batches to collect (default 1). Craigslist "
+                        "has no pages -- ?page= and ?s= return the same "
+                        "document -- so a batch above the first is reached by "
+                        "WALKING the rendered list inside the same page. One "
+                        "URL tops out at %d results however far it is walked."
+                        % RESULT_CAP)
     p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
     p.add_argument("--concurrency", type=int, default=1, metavar="N",
-                   help="Accepted for flag parity and IGNORED here: parallel "
-                        "page fetching lives in playwright_scraper.py.")
+                   help="Accepted for flag parity and capped at 1: no batch "
+                        "of a Craigslist listing has an address of its own, "
+                        "so there is nothing to hand a worker -- in any "
+                        "engine. Use the site's own filters to make several "
+                        "narrower URLs and run each separately.")
     p.add_argument("--retries", type=int, default=3,
                    help="Attempts per page load before giving up (default 3). "
-                        "A page that comes back EMPTY is not retried: an empty "
-                        "hub category is a correct answer, not a fault.")
+                        "A page that comes back EMPTY is not retried: a query "
+                        "matching nothing is a correct answer, not a fault.")
     p.add_argument("--retry-delay", type=float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
@@ -1085,38 +1215,41 @@ def parse_args():
     args = p.parse_args()
     env_config.apply(args)
     if not args.url:
-        p.error("no --url given, and TOKOPEDIA_URL is not set in the environment "
-                "or in .env.")
-    if args.mode == "product" and args.pages != 1:
-        logger.warning("--pages %d is ignored in --mode %s: there is one page "
-                       "to read.", args.pages, args.mode)
-        args.pages = 1
+        p.error("no --url given, and CRAIGSLIST_URL is not set in the "
+                "environment or in .env.")
     if not is_supported_host(args.url):
-        # Refused rather than attempted: the selectors, the sku pattern and
-        # the pagination convention are all Tokopedia's, so another marketplace
-        # would not fail loudly — it would return zero rows and read as an
-        # empty category.
+        # Refused rather than attempted: the selectors, the posting-path
+        # pattern and the id alphabet are all Craigslist's, so another
+        # classifieds site would not fail loudly -- it would return zero rows
+        # and read as an empty listing.
         why = unsupported_reason(args.url)
         if why:
             p.error(f"{site_host(args.url)} {why}.")
         p.error(f"{site_host(args.url) or args.url!r} is not Craigslist. This "
-                f"scraper reads www.craigslist.org, the site's only "
-                f"storefront — one language, one currency, no per-country "
-                f"hostname and no locale prefix.")
+                f"scraper reads www.craigslist.org, which is the site's only "
+                f"hostname worldwide -- the area is a path segment, and the "
+                f"site's own index lists 714 of them.")
     kind = listing_kind(args.url)
-    if args.mode == "product" and kind != "product":
-        p.error(f"--mode product expects a /{{shop}}/{{slug}} product URL; "
-                f"{args.url!r} is a {kind} page.")
-    if args.mode == "listing" and kind == "product":
-        p.error(f"{args.url!r} is a single product page. Use --mode product "
-                f"for it, or pass a /search?st=product&q=... or "
-                f"/p/<cat>/<sub>/<subsub> URL.")
+    if args.mode == "posting" and kind != "posting":
+        p.error(f"--mode posting expects a /view/d/{{slug}}/{{token}} advert "
+                f"URL; {args.url!r} is a {kind} page.")
+    if args.mode == "listing" and kind == "posting":
+        p.error(f"{args.url!r} is a single advert. Use --mode posting for it, "
+                f"or pass a /search/area/{{slug}}?cat=... URL.")
     if args.mode == "listing" and kind == "hub":
+        # A warning rather than an error: it IS a Craigslist URL and the run
+        # will honestly report zero rows (exit 4). But a reader who tried the
+        # obvious area URL first would otherwise conclude the tool is broken.
         logger.warning(
-            "%s is a /p/<slug> DISCOVERY HUB, not a listing — no product "
-            "grid, only banners and recommendation carousels — so this run "
-            "will return 0 rows and exit 4. The real listings are one or two "
-            "levels down: /p/<cat>/<sub>[/<subsub>].", args.url)
+            "%s is an AREA LANDING page, not a result list. It carries the "
+            "area's category links and no results of its own, so this run "
+            "will return 0 rows and exit 4. A result list looks like "
+            "/search/area/<slug>?cat=<code>, e.g. "
+            "/search/area/newyork?cat=sss.", args.url)
+    if args.mode == "posting" and args.pages != 1:
+        logger.warning("--pages %d is ignored in --mode %s: there is one page "
+                       "to read.", args.pages, args.mode)
+        args.pages = 1
     return args
 
 
