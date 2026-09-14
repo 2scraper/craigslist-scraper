@@ -8,6 +8,56 @@ as a command-line toolkit can. A **patch** release means fixes — not that
 every flag is frozen. Where a fix changes what a default does, the release
 notes say so first, because nobody should discover that from their output.
 
+## [0.1.1] — 2026-09-14
+
+> **If you took v0.1.0, replace it.** Its `scraper_api_client.py` — a fourth,
+> standalone CLI — still described a sibling site: its grid, its
+> five-product fetch, its exit country, and an output prefix naming it. The
+> file works, and everything it said about itself was about somewhere else.
+
+### Fixed
+
+- `scraper_api_client.py` rewritten for this site, and **run** — which turned
+  out to matter, because on Craigslist the browserless path is the strong
+  one: **350 rows, ~5s, $0.0005, no CDP routing at all**, against 353 from
+  `playwright_scraper.py` on the same URL with the same columns and within a
+  percent of the same coverage. Two runs forty seconds apart returned all 350
+  of the same ids. The sibling repo this file came from warns that its site
+  returns five; the difference is structural and reads the other way round
+  here.
+- `diff_runs.py` was watching columns that cannot change. `TRACKED_FIELDS`
+  still held `sold` and `sold_is_floor`, which this schema does not have, so
+  two of its eight comparisons were no-ops on every row of every diff — while
+  `title`, `location` and `image_count`, which a poster edits routinely, were
+  not watched. Its currency guard was backwards too: on this site the
+  currency follows the AREA, and `source` is `craigslist.org` on both sides
+  of every diff, so the currency is the only thing that catches a Tokyo run
+  diffed against a Toronto one.
+- `CONTRIBUTING.md` likewise still described the other site in eight places.
+- Three documents were referenced and absent: `TROUBLESHOOTING.md` (now
+  written), plus `FINDINGS.md` and `CLAUDE.md`, whose references were removed
+  — a local working file has no business being named by a published one.
+- `captcha_solver.get_balance` was referenced nowhere. Kept and given a
+  consumer, because its error branch is the half nobody exercises: a wrong
+  key returns HTTP 200 with an `errorId` in the body, so a client checking
+  only the status code reads a failure as a balance.
+
+### Added
+
+- A measurement worth having: **a busy listing turns over in under two
+  hours.** On New York for sale, 451 of 729 dated rows were posted within the
+  last hour and 278 in the one before; two runs two hours apart shared *no*
+  ids, while two runs forty seconds apart shared all 350. So `diff_runs.py`
+  against that URL at a two-hour interval reports everything as delisted and
+  everything as new — correctly, and uselessly. It also sizes the
+  10,000-result ceiling: about twenty hours of that area's postings.
+- Guards so none of the above can recur silently: every shipped file is
+  counted for sibling-site names, every `ALL_CAPS.md` a file references must
+  exist, every field `diff_runs` tracks must be a real column this site
+  fills, and every public name must be read somewhere.
+
+Offline checks: 647, up from 455.
+
 ## [0.1.0] — 2026-09-14
 
 First release of this repository on the family architecture. It replaces an

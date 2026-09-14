@@ -2188,14 +2188,20 @@ def test_every_document_referenced_exists():
     # A dangling reference sends a reader looking for a file that is not
     # there, which is worse than not mentioning it. `--dump-html`'s help
     # pointed at a TROUBLESHOOTING.md this repo did not have.
-    referenced = set()
+    # CHANGELOG.md is excluded, and that is the point rather than a hole: a
+    # changelog's job includes saying "the reference to X was removed", so it
+    # legitimately names files that no longer exist. Everything else names a
+    # document because it wants the reader to go and read it.
+    skip = {os.path.basename(__file__), "CHANGELOG.md"}
+    referenced = {}
     for name, text in _shipped_text():
-        if name == os.path.basename(__file__):
+        if name in skip:
             continue
         for doc in re.findall(r'\b([A-Z][A-Z_]+\.md)\b', text):
-            referenced.add(doc)
-    for doc in sorted(referenced):
-        ok &= check("%s is referenced and exists" % doc,
+            referenced.setdefault(doc, set()).add(name)
+    for doc, by in sorted(referenced.items()):
+        ok &= check("%s is referenced (by %s) and exists"
+                    % (doc, ", ".join(sorted(by))),
                     os.path.exists(os.path.join(REPO_ROOT, doc)))
     return ok
 

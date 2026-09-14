@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "craigslist-scraper"
-version = "0.1.0"
+version = "0.1.1"
 description = "Craigslist scraper: result lists and postings across 714 areas."
 readme = "README.md"
 license = "MIT"
