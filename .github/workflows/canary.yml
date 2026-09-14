@@ -168,6 +168,80 @@ jobs:
           sys.exit(1 if fail else 0)
           PY
 
+      # A SECOND run, one batch, JavaScript off. It is not redundant: the run
+      # above asks for three batches, which turns JavaScript ON, and on a
+      # GitHub runner the site's application had already removed the served
+      # result list by the time the first snapshot was taken -- so that run
+      # read the rendered grid and reported "served batch: 0 rows, 0
+      # enriched". Its structured-coverage assertion is guarded on there
+      # being a served batch at all, so it never fired.
+      #
+      # Which means the first run alone is green while never touching the
+      # thing most worth watching: the served list, its JSON-LD, and the
+      # order-preserving subsequence alignment between them. This run costs
+      # about three seconds and covers exactly that.
+      - name: Run again, one batch, for the served list
+        id: served
+        env:
+          CRAIGSLIST_PROXY: ${{ secrets.CRAIGSLIST_PROXY }}
+        run: |
+          set +e
+          python playwright_scraper.py \
+            --url "https://www.craigslist.org/search/area/newyork?cat=sss" \
+            --format json \
+            --out canary_served
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Check the served batch
+        run: |
+          code="${{ steps.served.outputs.exit_code }}"
+          if [ "$code" != "0" ]; then
+            echo "::warning::The one-batch run exited $code, so the served-list"
+            echo "::warning::path was not checked. The walking run above stands."
+            exit 0
+          fi
+          python - <<'PY'
+          import json, sys
+
+          rows = json.load(open("canary_served.json"))
+          fail = []
+
+          # Measured 2026-09-14: 353 rows for this URL from one served
+          # response, and 294-358 across the large-area captures.
+          if len(rows) < 250:
+              fail.append("only %d rows from one served response; 353 measured, "
+                          "294-358 across captures" % len(rows))
+
+          enriched = sum(1 for r in rows if r["price_source"] == "jsonld")
+          share = 100.0 * enriched / len(rows) if rows else 0
+          # THE check this second run exists for. The served list and the
+          # page's JSON-LD are aligned as an order-preserving subsequence, and
+          # the parser DROPS the enrichment wholesale when they cannot be
+          # reconciled -- so a share near zero means the alignment broke,
+          # which is silent in every other signal.
+          if share < 60:
+              fail.append("structured coverage is %.0f%% (89%% measured on this "
+                          "URL, 66-99%% across captures). The served list and the "
+                          "JSON-LD may have stopped aligning, which the parser "
+                          "handles by dropping the enrichment -- silently, as far "
+                          "as row counts are concerned" % share)
+
+          with_geo = sum(1 for r in rows if r["latitude"] is not None)
+          if with_geo == 0:
+              fail.append("no row carries coordinates; 89%% did on this URL")
+
+          currencies = {r["currency"] for r in rows if r["currency"]}
+          if currencies != {"USD"}:
+              fail.append("currencies are %r, not {'USD'} -- this is a US area "
+                          "and the currency follows the area" % currencies)
+
+          print("served batch: %d rows | %.0f%% structured | %d with coordinates | %r"
+                % (len(rows), share, with_geo, currencies))
+          for problem in fail:
+              print("::error::%s" % problem)
+          sys.exit(1 if fail else 0)
+          PY
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -175,5 +249,7 @@ jobs:
           path: |
             canary.json
             canary.meta.json
+            canary_served.json
+            canary_served.meta.json
             canary_page.html*
           if-no-files-found: warn
