@@ -44,6 +44,8 @@ from bs4 import BeautifulSoup
 
 from output_writer import Product
 
+logger = logging.getLogger("product_parser")
+
 
 # --------------------------------------------------------------------------
 # Hosts
@@ -421,15 +423,35 @@ def is_no_results(html: str) -> bool:
 
 
 def detect_page_state(html: str, status: Optional[int], url: str = "") -> str:
-    """One of: content · empty · blocked · unpainted · unknown.
+    """One of: content · empty · blocked · unpainted.
 
-    Ordered strongest-first. `content` and `empty` are both decided by the
-    site's own container, which is a positive signal no interstitial carries;
-    only when that container is missing entirely do the weaker signals get a
-    turn.
+    Ordered by how much each signal PROVES, not by how cheap it is. A sibling
+    repo put a threshold heuristic ahead of an unambiguous positive signal and
+    reported exit 3 -- blocked -- for a perfectly good page that happened to
+    reference the site's assets fewer times than the threshold wanted.
+
+    So: the site's own containers first (a posting body, a results
+    container), because no interstitial carries one; then the rendered grid;
+    then vendor markers and refusing statuses; and only last the
+    asset-reference heuristic, which is the weakest of the four and the only
+    one a legitimately unusual page could trip.
     """
     html = html or ""
     soup = BeautifulSoup(html, "html.parser")
+
+    # A POSTING page has no results container and never will, so it has to be
+    # recognised on its own terms or every advert classifies as a listing that
+    # has not painted. Its body is server-rendered on every category measured,
+    # which makes it the same kind of unambiguous positive signal the results
+    # container is for a listing.
+    if soup.select_one("#postingbody") is not None:
+        return "content"
+    # A posting the site has taken down answers 200 with its own removal
+    # notice and no body. That is an EMPTY answer, not a failure: the advert
+    # is gone, which is a fact worth reporting rather than retrying.
+    if soup.select_one(".removed, #removed") is not None:
+        return "empty"
+
     container = _results_container(soup)
 
     if container is not None:
@@ -462,6 +484,12 @@ def detect_page_state(html: str, status: Optional[int], url: str = "") -> str:
 # --------------------------------------------------------------------------
 # Listing parsing
 # --------------------------------------------------------------------------
+#
+# `parse_products` calls `parse_rendered_cards` and `page_currency`, both
+# defined further down this file. That is resolved at call time, not at
+# import, and the order is deliberate: the served list is what this site is
+# read from, and the rendered grid is the fallback, so they are written in
+# that order.
 
 def _json_ld_blocks(soup: BeautifulSoup) -> List[Any]:
     out = []
@@ -626,9 +654,35 @@ def parse_products(html: str, url: str, page: Optional[int] = None,
     """
     soup = BeautifulSoup(html or "", "html.parser")
     entries = _static_entries(soup)
+
+    if not entries and soup.select(SELECTORS["rendered_card"]):
+        # The served list is gone and the application's own grid is in its
+        # place. That is not a failure -- it is what this page looks like
+        # once JavaScript has run for long enough, and how long "long enough"
+        # is depends on the browser: locally the list survived ~20s, while
+        # over a remote Scraping Browser profile the swap had already
+        # happened by the time the first snapshot was taken.
+        #
+        # So read the grid rather than returning zero rows from a page that
+        # plainly has results on it. The rows carry less -- no coordinates,
+        # no structured price -- and `price_source` says so on every one of
+        # them.
+        logger.info("The served result list is not in this page; reading the "
+                    "rendered grid instead. Rows will carry price_source="
+                    "'dom' and no coordinates.")
+        return parse_rendered_cards(html, url, page=page, category=category,
+                                    currency=page_currency(html))
+
     items = _item_list(_json_ld_blocks(soup))
     aligned, complete = _align_structured(entries, items)
     if not complete:
+        logger.warning(
+            "The page's structured data does not align with its result list "
+            "(%d structured items, %d entries, alignment stopped early). The "
+            "two views disagree about what is on this page, so the "
+            "enrichment is dropped and rows carry their printed prices only. "
+            "A row wearing its neighbour's coordinates would be worse than a "
+            "row without any.", len(items), len(entries))
         aligned = [None] * len(entries)
 
     cat = category or category_from_url(url)
@@ -711,7 +765,7 @@ def parse_products(html: str, url: str, page: Optional[int] = None,
         ))
 
     if dropped:
-        logging.warning(
+        logger.warning(
             "%d of %d result entries carried no recognisable posting id and "
             "were dropped (first: %s). If this is more than a stray hub link, "
             "the posting URL shape has changed.",
@@ -835,6 +889,38 @@ def _posting_geo(soup: BeautifulSoup) -> Tuple[Optional[float], Optional[float]]
     return lat, lon
 
 
+def _breadcrumb_category(soup: BeautifulSoup) -> Optional[str]:
+    """The category from the advert's own breadcrumb.
+
+    A posting URL carries no `cat=` parameter, so without this the column is
+    null on every row of a posting run. The page states it -- the JSON-LD
+    `BreadcrumbList` ends with the listing this advert belongs to -- and the
+    site's own statement beats both a null and a guess off the slug.
+    """
+    for block in _json_ld_blocks(soup):
+        if not isinstance(block, dict):
+            continue
+        crumbs = block.get("itemListElement")
+        if not isinstance(crumbs, list):
+            continue
+        # The LAST crumb pointing at a result list -- not the last crumb,
+        # which is the advert's own title. Measured on four postings: the
+        # trail runs [site, area, subarea?, category, subcategory, title],
+        # and only the middle entries carry a /search/ URL.
+        category = None
+        for crumb in crumbs:
+            if not isinstance(crumb, dict):
+                continue
+            name, item = crumb.get("name"), crumb.get("item")
+            if not isinstance(name, str) or not isinstance(item, str):
+                continue
+            if "/search/" in item:
+                category = name.strip() or category
+        if category:
+            return category
+    return None
+
+
 def parse_posting(html: str, url: str, category: Optional[str] = None) -> Optional[Product]:
     """One advert, read off its own page.
 
@@ -877,6 +963,7 @@ def parse_posting(html: str, url: str, category: Optional[str] = None) -> Option
             pid = m.group(1)
 
     posted, updated = _posting_times(soup)
+    breadcrumb_category = _breadcrumb_category(soup)
     lat, lon = _posting_geo(soup)
     images = _posting_images(html)
     attrs = _posting_attributes(soup)
@@ -888,7 +975,7 @@ def parse_posting(html: str, url: str, category: Optional[str] = None) -> Option
         price=price,
         currency=currency if price is not None else None,
         image_url=images[0] if images else None,
-        category=category or category_from_url(url),
+        category=category or category_from_url(url) or breadcrumb_category,
         price_source="dom" if price is not None else None,
         post_id=pid,
         area=area_from_url(url),
@@ -901,3 +988,156 @@ def parse_posting(html: str, url: str, category: Optional[str] = None) -> Option
         posted_at=posted,
         updated_at=updated,
     )
+
+
+# --------------------------------------------------------------------------
+# The rendered grid
+# --------------------------------------------------------------------------
+#
+# A second extraction path, and it exists for exactly one reason: walking
+# past the first batch. The served list is complete for the first ~300
+# results and is where a single-batch run gets everything, structured
+# enrichment included. Beyond that the only view is the site's own
+# virtualised grid, whose nodes are RECYCLED as the window slides -- so rows
+# have to be taken while they are on screen, and what a card carries is less
+# than what the served list plus its JSON-LD carries.
+#
+# The difference is visible in `price_source`, which is the column's whole
+# job: "dom" rows have no coordinates and no structured price, because a
+# card does not publish them. diff_runs.py already treats a price change
+# that comes with a price_source change as `source_changed` rather than
+# `changed`, so a run that walked and a run that did not do not read as a
+# catalogue full of price movements.
+
+_RENDERED = {
+    "link": "a.posting-title, a.main",
+    "title": "a.posting-title .label",
+    "price": ".priceinfo",
+    "location": ".result-location",
+    "posted": ".result-posted-date",
+    "image": "img[src]",
+}
+
+
+def parse_rendered_cards(html: str, url: str, page: Optional[int] = None,
+                         category: Optional[str] = None,
+                         currency: Optional[str] = None,
+                         start_position: int = 1) -> List[Product]:
+    """Rows for the cards currently in the document.
+
+    `currency` is passed IN rather than read here. The page's JSON-LD is
+    itself virtualised -- it tracks the visible window, holding 296 items on
+    arrival and 316 after a walk -- so reading the currency from whatever
+    happens to be in it at this moment would make one column depend on scroll
+    position. It is a fact about the page, read once before the walk starts.
+
+    `start_position` continues the numbering across harvests within one
+    batch, so `position` stays meaningful when the caller stitches several
+    reads together.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    cat = category or category_from_url(url)
+    area = area_from_url(url)
+
+    rows: List[Product] = []
+    for offset, card in enumerate(soup.select(SELECTORS["rendered_card"])):
+        link = card.select_one(_RENDERED["link"])
+        href = (link.get("href") or "").strip() if link else ""
+        if not href:
+            continue
+        clean_url = strip_tracking(href)
+        sku = sku_from_url(clean_url)
+        if not sku:
+            continue
+
+        title_node = card.select_one(_RENDERED["title"])
+        title = (title_node.get_text(" ", strip=True) if title_node
+                 else (card.get("title") or "").strip())
+
+        price = None
+        price_node = card.select_one(_RENDERED["price"])
+        if price_node is not None:
+            found = prices_in(price_node.get_text(" ", strip=True))
+            if found:
+                price = found[0]
+
+        loc_node = card.select_one(_RENDERED["location"])
+        posted_node = card.select_one(_RENDERED["posted"])
+        img = card.select_one(_RENDERED["image"])
+        img_url = (img.get("src") or "").strip() if img else ""
+        # The site's own "no image" placeholder, served from its own host
+        # under `/images/d/<pid>/empty.png`. Recognised positively rather
+        # than let through: a column that is 100% populated and half
+        # placeholder is worse than one that is honestly sparse.
+        if img_url and "/empty.png" in img_url:
+            img_url = ""
+
+        pid = (card.get("data-pid") or "").strip()
+        rows.append(Product(
+            url=clean_url,
+            sku=sku,
+            title=_html.unescape(title) if title else None,
+            price=price,
+            currency=currency if price is not None else None,
+            image_url=img_url or None,
+            category=cat,
+            price_source="dom" if price is not None else None,
+            page=page,
+            position=start_position + offset,
+            post_id=pid if _POST_ID_RE.match(pid) else None,
+            area=area,
+            location=loc_node.get_text(" ", strip=True) if loc_node else None,
+            # Relative on a card ("<1hr ago", "3 days ago"), so it goes in
+            # the column named for what it is rather than being turned into
+            # a timestamp by arithmetic against the clock of whoever ran it.
+            posted_at=posted_node.get_text(" ", strip=True) if posted_node else None,
+        ))
+    return rows
+
+
+# --------------------------------------------------------------------------
+# What the page says about itself
+# --------------------------------------------------------------------------
+
+def search_header(html: str) -> Optional[str]:
+    """The site's own description of this listing.
+
+    Craigslist writes it into the static header -- "craigslist For Sale in
+    New York City", or with the query quoted when there is one. Useful in the
+    run sidecar because it is the site's OWN statement of what was asked for,
+    which is the thing to compare against when a run returns a surprise.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    node = soup.select_one(".cl-static-header")
+    if node is None:
+        return None
+    text = _html.unescape(node.get_text(" ", strip=True))
+    return re.sub(r"\s{2,}", " ", text).strip() or None
+
+
+_TOTAL_RE = re.compile(r'of\s+([\d,]+)(\+?)')
+
+
+def total_results(html: str, shown: Optional[int] = None) -> Optional[int]:
+    """How many results the site says this listing has, if it says.
+
+    Only the RENDERED header carries this ("1 - 6 of 10,000+"), so it is
+    None on a served-markup run -- which is honest rather than a gap: the
+    served list does not state a total and guessing one from what arrived
+    would turn `shown` into a fake total.
+
+    The `+` matters and is deliberately not preserved as a number: 10,000 is
+    the ceiling one URL can be walked to, not a count of the catalogue, and
+    `RESULT_CAP` is where that fact lives.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    node = soup.select_one(SELECTORS["visible_counts"])
+    if node is None:
+        return None
+    m = _TOTAL_RE.search(node.get_text(" ", strip=True))
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", ""))
+    except ValueError:
+        return None

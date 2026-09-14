@@ -197,6 +197,25 @@ SCROLL_STEP_PX = 2_500
 # ends the walk.
 WALK_STEPS_MAX = 900
 SCROLL_PAUSE_MS = 500
+# The smallest the adaptive step will go. Below this the walk crawls without
+# collecting meaningfully more, because the rendered window holds 200-300
+# nodes and a step this size already overlaps heavily.
+SCROLL_STEP_MIN = 600
+# What counts as a thin or a fat overlap between two consecutive harvests,
+# as a share of the ids in the later one. Thin means the window is moving
+# nearly as fast as the harvest can read, which is one bad step away from a
+# gap; fat means there is room to move faster.
+OVERLAP_THIN = 0.25
+OVERLAP_FAT = 0.80
+# What one unit of `--pages` means in items.
+#
+# There are no pages on this site, so the flag needs a size and the honest
+# one is the site's own first-response batch. Measured across 14 captures:
+# 41 entries on the smallest area (paris), 359 on the largest (toronto),
+# with everything else between 294 and 358. 300 is the middle of that and
+# is only ever a target for how far to walk -- no row count depends on it.
+BATCH_HINT = 300
+
 # How many consecutive steps without the counter advancing mean the end.
 # Deliberately large: the counter pauses while a fetch lands, and a small
 # tolerance ends the walk in the middle of the list. 40 steps is ~20s of
@@ -229,28 +248,69 @@ def walk_virtualised(count: Callable[[str], int],
                      text: Callable[[str], Optional[str]],
                      scroll_by: Callable[[int], None],
                      sleep: Callable[[int], None],
-                     harvest: Callable[[], None],
+                     harvest: Callable[[], set],
                      want_items: Optional[int] = None,
                      steps: int = WALK_STEPS_MAX,
                      step_px: int = SCROLL_STEP_PX,
                      pause_ms: int = SCROLL_PAUSE_MS,
-                     stall_steps: int = WALK_STALL_STEPS) -> int:
+                     stall_steps: int = WALK_STALL_STEPS) -> dict:
     """Slide the rendered window down the list, harvesting as it goes.
 
-    `harvest` is called before every scroll, because the DOM nodes are
-    RECYCLED: an id that is in the document now will not be in it two steps
-    later, so anything not taken at the time is gone. That is the whole
-    difference between this and a lazy-load scroll, where the nodes
-    accumulate and a single read at the end is enough.
+    `harvest` is called before every scroll and must RETURN THE SET OF IDS it
+    saw. Two things depend on that, and the second is why it is not a plain
+    callable:
 
-    Returns the highest position the site's own counter reported, which is
-    what says how far the walk actually got -- a number that can be compared
-    against `RESULT_CAP` and against what was harvested.
+    The nodes are RECYCLED. An id in the document now will not be in it two
+    steps later, so anything not taken at the time is gone -- the whole
+    difference between this and a lazy-load scroll, where nodes accumulate and
+    one read at the end suffices.
+
+    And the walk can OUTRUN its own harvest. Measured on two consecutive live
+    runs of the same URL: one harvested 1,000 distinct rows by counter
+    position 903, the other 360 by position 906. Same code, same page,
+    different machine load -- when a harvest takes longer than the scroll
+    step covers, the window moves past rows that are never read, and nothing
+    in the result says so. A row count that swings 3x between runs while both
+    report success is exactly the failure this codebase treats as its worst
+    class.
+
+    So each harvest's ids are compared against the previous one's. Overlap
+    means the window slid; NO overlap means it jumped a gap. The step then
+    adapts -- halved on a thin overlap, eased back up on a fat one -- and any
+    gap that does happen is counted and returned, so the caller can report a
+    partial walk instead of a confident wrong number.
+
+    Returns a dict: how far the site's own counter got, how many steps were
+    spent, and how many gaps were detected.
     """
     highest = 0
     stalled = 0
-    for _ in range(steps):
-        harvest()
+    gaps = 0
+    taken = 0
+    step = step_px
+    previous: set = set()
+
+    for taken in range(1, steps + 1):
+        seen = harvest() or set()
+        if previous and seen:
+            overlap = len(seen & previous)
+            if overlap == 0:
+                # The window jumped clean past a stretch of the list. Those
+                # rows are not recoverable by scrolling on -- they are behind
+                # us and their nodes are gone.
+                gaps += 1
+                step = max(step // 2, SCROLL_STEP_MIN)
+                logger.warning(
+                    "The walk outran its harvest: no ids in common with the "
+                    "previous read, so a stretch of the list went by unread. "
+                    "Halving the scroll step to %dpx. This run is PARTIAL.",
+                    step)
+            elif overlap < len(seen) * OVERLAP_THIN:
+                step = max(int(step * 0.75), SCROLL_STEP_MIN)
+            elif overlap > len(seen) * OVERLAP_FAT and step < step_px:
+                step = min(int(step * 1.25) + 1, step_px)
+        previous = seen
+
         high = window_high(text(SELECTORS["visible_counts"]))
         if high is not None and high > highest:
             highest, stalled = high, 0
@@ -261,14 +321,16 @@ def walk_virtualised(count: Callable[[str], int],
         if want_items is not None and highest >= want_items:
             break
         if highest >= RESULT_CAP:
-            logger.info("reached the site's %d-result ceiling for one URL; "
-                        "narrow the URL (a price band, a subarea, a search "
-                        "term) to reach more", RESULT_CAP)
+            logger.info("Reached the site's %d-result ceiling for one URL. "
+                        "Narrow the URL -- a price band, a subarea, a search "
+                        "term -- to reach more.", RESULT_CAP)
             break
-        scroll_by(step_px)
+        scroll_by(step)
         sleep(pause_ms)
+
     harvest()
-    return highest
+    return {"counter_reached": highest, "steps": taken, "gaps": gaps,
+            "hit_cap": highest >= RESULT_CAP, "final_step_px": step}
 
 
 # ---------------------------------------------------------------------------
