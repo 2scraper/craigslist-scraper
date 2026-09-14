@@ -1,363 +1,268 @@
-# Craigslist scraper — Open Source
+# craigslist-scraper
 
-> Free, open-source Craigslist scraper with built-in CAPTCHA bypass, anti-detect browser,
-> and fingerprint spoofing. Extract data from all Craigslist categories in JSON or CSV format.
+[![release](https://img.shields.io/github/v/release/2scraper/craigslist-scraper?sort=semver)](https://github.com/2scraper/craigslist-scraper/releases)
+[![tests](https://github.com/2scraper/craigslist-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/craigslist-scraper/actions/workflows/tests.yml)
+[![canary](https://github.com/2scraper/craigslist-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/craigslist-scraper/actions/workflows/canary.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
+[![engines: Playwright · Selenium · pyppeteer](https://img.shields.io/badge/engines-Playwright%20%C2%B7%20Selenium%20%C2%B7%20pyppeteer-informational)](#engines)
+[![runs without an account](https://img.shields.io/badge/runs-without%20an%20account-success)](#do-i-need-anything-to-run-this)
 
-[![GitHub](https://img.shields.io/badge/GitHub-Open%20Source-black?logo=github)](https://github.com/2captcha/craigslist-scraper)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)](https://python.org)
-[![Playwright](https://img.shields.io/badge/Playwright-primary-45ba4b?logo=playwright)](https://playwright.dev)
-[![Selenium](https://img.shields.io/badge/Selenium-supported-43B02A?logo=selenium)](https://selenium.dev)
-[![Puppeteer](https://img.shields.io/badge/Puppeteer-supported-40B5A4?logo=puppeteer)](https://pptr.dev)
-
----
-
-## What Is This?
-
-This is a **free, open-source web scraper** for [Craigslist](https://craigslist.org)
-— one of the largest classified ads platforms in the world.
-
-The scraper handles **all Craigslist categories** out of the box:
-`For Sale` · `Housing` · `Jobs` · `Services` · `Community` · `Gigs` · `Resumes`
-(70+ subcategories in total)
-
-Output is clean **JSON** or **CSV**, ready for analysis, enrichment, or storage.
-
-**No subscription. No API limits. You run it on your own machine.**
-
----
-
-## Key Features
-
-| Feature | Details |
-|---|---|
-| 🔄 All categories | 70+ Craigslist categories supported |
-| 🏙️ All cities | 15+ US cities pre-configured, any city by slug |
-| 🔍 Full listing data | Title, price, body, images, attributes, geo, timestamp |
-| 📦 JSON / CSV output | Choose your format — or export both at once |
-| 🤖 CAPTCHA bypass | Integrated with [2captcha.com](https://2captcha.com) — reCAPTCHA v2/v3, hCaptcha |
-| 🕵️ Anti-detect browser | Stealth JS patches, disabled automation flags |
-| 🖐️ Fingerprint spoofing | Random UA, viewport, locale, timezone, canvas noise |
-| 🌐 Proxy support | HTTP/HTTPS proxies with auth |
-| ⏱️ Randomized delays | Human-like timing between requests |
-| 🔧 3 browser engines | Playwright (primary), Selenium, Puppeteer |
-
----
-
-## Quick Start
-
-### 1. Clone the repo
+Reads Craigslist result lists and adverts into JSON or CSV, across all 714
+areas the site publishes. Three interchangeable browser engines, one row
+schema, and every number below measured rather than estimated.
 
 ```bash
-git clone https://github.com/2scraper/craigslist-scraper.git
-cd craigslist-scraper
-```
-
-### 2. Install dependencies
-
-**Playwright (recommended)**
-```bash
-pip install playwright httpx
+pip install -r requirements.txt -r requirements-playwright.txt
 playwright install chromium
+
+python playwright_scraper.py \
+    --url "https://www.craigslist.org/search/area/newyork?cat=sss" \
+    --format both
 ```
 
-**Selenium**
-```bash
-pip install selenium webdriver-manager httpx
+```
+[INFO] Parsed 353 row(s) from batch 1.
+[INFO] Price coverage on batch 1: 349/353 (99%); the measured floor is 90%.
+[INFO] Structured-data coverage on the served batch: 314/353 (89%).
+[+] Saved 353 products -> craigslist_products.json
 ```
 
-**Puppeteer (Node.js)**
-```bash
-npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth axios csv-writer minimist
-```
-
-### 3. Run it
-
-```bash
-# Scrape all For Sale listings in New York → JSON
-python craigslist_playwright_scraper.py --city newyork --categories for_sale --format json
-
-# Scrape jobs + housing in San Francisco → CSV, 5 pages each
-python craigslist_playwright_scraper.py --city sfbay --categories jobs housing --max-pages 5 --format csv
-
-# Search for "MacBook" across electronics
-python craigslist_playwright_scraper.py --categories electronics --query "MacBook" --format both
-
-# With CAPTCHA bypass via 2captcha.com
-python craigslist_playwright_scraper.py --captcha-key YOUR_2CAPTCHA_API_KEY --categories cars_trucks
-
-# With proxy
-python craigslist_playwright_scraper.py --proxy http://user:pass@host:3128
-
-# Puppeteer version (Node.js)
-node craigslist_puppeteer_scraper.js --city losangeles --categories for_sale --format json
-```
+Two and a half seconds, no key, no proxy, no account.
 
 ---
 
-## Output Format
+## Do I need anything to run this?
 
-Each scraped listing contains:
+**No.** Measured 2026-09-14: a datacentre address in Germany, with no proxy
+and no key, was served the full New York for-sale listing — 536,962 bytes,
+296 results — and no challenge of any kind appeared. Across 22 captures
+covering six categories and five locales there were zero reCAPTCHA, hCaptcha,
+Turnstile, DataDome, PerimeterX, Incapsula, Akamai and AWS WAF markers, and
+the word "captcha" does not appear on any of them.
+
+So this is one of the sites in this family where the paid products are
+genuinely optional. What they buy, when you want it:
+
+| | what it gets you |
+|---|---|
+| a residential **proxy** | a chosen exit country, and volume spread across many addresses instead of one |
+| the **Scraping Browser API** | a remote browser you do not run or patch, with a persistent profile |
+| **fingerprints** | a consistent device identity across runs |
+| **captcha solving** | nothing here today — wired up in case a bot manager is switched on between deploys |
+
+All four are 2Captcha products behind one key. See [`.env.example`](.env.example),
+which documents every variable this code reads and nothing it does not.
+
+---
+
+## What you get
+
+One row per advert, the family's column prefix first and this site's columns
+after it. Cut from a real run — [`sample_output.json`](sample_output.json) and
+[`sample_output.csv`](sample_output.csv) ship with the repo.
 
 ```json
 {
-  "url":        "https://newyork.craigslist.org/mnh/ele/d/iphone-15-pro/1234567890.html",
-  "title":      "iPhone 15 Pro 256GB — like new",
-  "price":      "$950",
-  "location":   "Manhattan, NY",
-  "posted":     "2024-04-01T14:32:00",
-  "body":       "Selling my iPhone 15 Pro, 256GB, Space Black. Excellent condition...",
-  "images":     ["https://images.craigslist.org/abc123_600x450.jpg"],
-  "attributes": {
-    "condition": "like new",
-    "make / manufacturer": "Apple"
-  },
-  "category":   "electronics",
-  "city":       "https://newyork.craigslist.org",
-  "scraped_at": "2024-04-01T18:00:00"
+  "source": "craigslist.org",
+  "url": "https://www.craigslist.org/view/d/flushing-fully-serviced-pre-owned/1yTKyWioo6fXG76Mntgoxg",
+  "sku": "1yTKyWioo6fXG76Mntgoxg",
+  "title": "Fully Serviced Pre-owned Raleigh M50 DX Aluminum Mountain Bike",
+  "price": 250.0,
+  "currency": "USD",
+  "price_source": "jsonld",
+  "page": 1,
+  "position": 1,
+  "post_id": null,
+  "area": "newyork",
+  "location": "queens",
+  "region": "NY",
+  "latitude": 40.7605985603477,
+  "longitude": -73.7967995699928,
+  "image_count": 1
 }
 ```
 
----
+`--mode posting` adds the body text, the attribute bag (`odometer`,
+`compensation`, `broker fee details` — they are category-shaped), every image,
+both timestamps, and Craigslist's classic numeric `post_id`.
 
-## Supported Categories
-
-<details>
-<summary>📦 For Sale (40 subcategories)</summary>
-
-`for_sale` · `antiques` · `appliances` · `arts_crafts` · `atvs` · `auto_parts` ·
-`aviation` · `baby_kids` · `barter` · `bikes` · `boats` · `books` · `business` ·
-`cars_trucks` · `cds_dvds` · `cell_phones` · `clothes` · `collectibles` · `computers` ·
-`electronics` · `farm_garden` · `free_stuff` · `furniture` · `garage_sales` ·
-`general_for_sale` · `health_beauty` · `heavy_equipment` · `household` · `jewelry` ·
-`materials` · `motorcycles` · `musical_instruments` · `photo_video` · `rvs_campers` ·
-`sporting_goods` · `tickets` · `tools` · `toys_games` · `trailers` · `video_games` · `wanted`
-</details>
-
-<details>
-<summary>🏠 Housing (10 subcategories)</summary>
-
-`housing` · `apartments` · `rooms_shared` · `sublets` · `housing_swap` ·
-`housing_wanted` · `office_commercial` · `parking_storage` · `real_estate` · `vacation_rentals`
-</details>
-
-<details>
-<summary>💼 Jobs (24 subcategories)</summary>
-
-`jobs` · `accounting` · `admin` · `arch_engineering` · `art_media` · `biotech_science` ·
-`business_mgmt` · `customer_service` · `education` · `food_beverage` · `general_labor` ·
-`government` · `healthcare` · `hr` · `it` · `legal` · `manufacturing` · `marketing` ·
-`nonprofit` · `retail` · `sales` · `security` · `skilled_trades` · `software` ·
-`transportation` · `writing`
-</details>
-
-<details>
-<summary>🛠 Services · 👥 Community · ⚡ Gigs · 📄 Resumes</summary>
-
-`services` and 19 subcategories · `community` and 15 subcategories ·
-`gigs` and 9 subcategories · `resumes`
-</details>
+**Six columns are null on every row of every run**, and that is the site
+rather than the scraper: Craigslist publishes no seller name, no ratings, no
+review counts, no stock state and no was-price anywhere. They are kept
+because consumers read this family's columns by name across repos, and each
+one says in [`output_writer.py`](output_writer.py) what measurement
+establishes it.
 
 ---
 
-## Supported Cities
+## Traps that look like bugs
 
-| Slug | City |
-|---|---|
-| `newyork` | New York |
-| `losangeles` | Los Angeles |
-| `chicago` | Chicago |
-| `sfbay` | San Francisco Bay Area |
-| `seattle` | Seattle |
-| `boston` | Boston |
-| `miami` | Miami |
-| `dallas` | Dallas |
-| `houston` | Houston |
-| `phoenix` | Phoenix |
-| `denver` | Denver |
-| `atlanta` | Atlanta |
-| `portland` | Portland |
-| `sandiego` | San Diego |
-| `washingtondc` | Washington DC |
-| `any-city` | Use any Craigslist city slug |
+Read these before concluding something is broken.
+
+**There are no pages.** `?page=2` and `?s=296` return a **byte-identical**
+response — same length, same first result. Not an empty set, not an error:
+the same page. `--pages` therefore walks the site's own rendered list instead
+of fetching more URLs, and `--concurrency` above 1 is refused, because a
+worker is only useful if it can be handed an address of its own.
+
+**One URL tops out at exactly 10,000 results.** Walked to exhaustion, the list
+yields 10,000 distinct ids and then the counter stops. To go further, narrow
+the URL — the site honours `&min_price=`/`&max_price=`, `&query=`,
+`&postedToday=1`, `&hasPic=1` and subarea slugs as real server-side
+parameters, each returning a different set — and run each separately.
+
+**Whole categories publish no structured data.** Jobs, services and community
+ship no JSON-LD `ItemList` at all; housing ships one with no prices in it.
+Rows from those categories come from the served result list alone, so their
+`currency` is `null` — the printed `$` is ambiguous across the USD, CAD and
+MXN areas this site serves, and a guess in a data column is worse than a null.
+
+**Coordinates are absent outside North America.** Craigslist publishes
+`geo: {0, 0}` as its placeholder, and which adverts get it is decided by the
+area: 0 of 1,249 structured entries across the US and Canadian captures, 37 of
+37 in Berlin, 244 of 244 in Mexico City, 321 of 324 in Tokyo. This scraper
+reports those as `null` rather than as a point in the Gulf of Guinea.
+
+**The currency follows the AREA, not your exit IP.** Eight areas fetched
+through a single US residential exit returned USD, CAD, EUR, JPY and MXN.
+There is no `--country` flag for the same reason: the area is a path segment,
+so a flag could only disagree with the URL.
+
+**An area landing page has no results.** `/area/newyork` carries that area's
+category links and nothing else, so a run against it honestly reports 0 rows
+and exit 4. A result list looks like `/search/area/newyork?cat=sss`.
+
+**The site's own data is sometimes nonsense, and is reported as-is.** One
+Tokyo advert publishes ¥2,500,013,000 for a set of IKEA shelves, in both its
+structured data and its printed price, while its title says ¥13,000 each.
+Correcting it would make this output disagree with the site for reasons no
+consumer could audit.
 
 ---
 
-## CAPTCHA Bypass with 2captcha.com
+## How it reads the page
 
-Craigslist sometimes shows **reCAPTCHA v2**, **reCAPTCHA v3**, or **hCaptcha** challenges.
-This scraper integrates with [2captcha.com](https://2captcha.com) — a fast, reliable
-CAPTCHA solving service that handles all CAPTCHA types automatically.
+Unusually for this family, **the served markup is richer than the rendered
+page**, and the scraper is built around that.
 
-### How it works
+Craigslist ships a complete no-JS result list in the first response, with a
+JSON-LD `ItemList` carrying structured price, currency, coordinates and images
+alongside it. Its application then **removes that list about twenty seconds
+in** and paints a virtualised grid of ~200 recycled nodes in its place.
 
 ```
-Scraper encounters CAPTCHA
-         │
-         ▼
-  Sends CAPTCHA task to 2captcha.com API
-         │
-         ▼
-  Human solvers or AI processes it (avg. 10–30 sec)
-         │
-         ▼
-  Token returned → injected into page → scraping continues
+t =  3.5s .. 20.5s   served list = 334 entries   rendered cards =   0
+t = 22.5s            served list =   0           rendered cards =   0     <- neither
+t = 26.6s            served list =   0           rendered cards = 200
 ```
 
-### Setup
+So **a single-batch run disables JavaScript**. The list is never removed, the
+hydration wait is not paid, and the window where the page has neither view
+cannot be hit. The browser still does all the fetching — TLS, headers,
+cookies, the proxy, the remote profile — it simply does not run the site's
+application. `--pages > 1` turns JavaScript back on, because walking past the
+first batch is the one thing that needs it.
 
-1. Register at [2captcha.com](https://2captcha.com) and top up your balance
-2. Copy your API key from the dashboard
-3. Pass it to the scraper:
+The two views are **not positionally aligned**: the JSON-LD is an
+order-preserving *subsequence* of the result list, and the entries it skips
+vary. Matching them by position would give every row after a skip its
+neighbour's price and coordinates. If the alignment cannot be reconciled the
+enrichment is dropped wholesale rather than guessed at, and `price_source`
+records which view each row's price came from.
+
+---
+
+## Engines
+
+All three produce identical output and agree on exit codes, run status, and
+whether a run crashes or spends money. Differences that are real and measured:
+
+| | Playwright | Selenium | pyppeteer |
+|---|---|---|---|
+| authenticated `--cdp-endpoint` | yes | **no** — `debuggerAddress` has nowhere for a password | yes |
+| authenticated `--proxy` | yes | **no** — credentials are stripped, with a warning | yes |
+| JavaScript off over a remote profile | no | no | **yes** — per page |
+| status | primary | secondary | secondary; upstream is unmaintained |
+
+That third row matters more than it looks. Over `--cdp-endpoint`, Playwright
+and Selenium cannot switch JavaScript off, so they read the rendered grid —
+about 200 rows with no coordinates — where pyppeteer reads the served list:
+**352 rows, 100% priced, 96% with coordinates**. For a single-batch run over a
+remote profile, pyppeteer is the better choice.
+
+Install exactly one engine. Their pins are mutually unsatisfiable —
+playwright and pyppeteer disagree on `pyee`, pyppeteer and selenium on
+`urllib3` — so use a virtualenv per engine if you want more than one.
 
 ```bash
-python craigslist_scraper_playwright.py --captcha-key YOUR_2CAPTCHA_API_KEY
+pip install -r requirements.txt -r requirements-selenium.txt
+pip install -r requirements.txt -r requirements-puppeteer.txt
 ```
 
-**Supported CAPTCHA types:**
-
-| Type | Method |
-|---|---|
-| reCAPTCHA v2 | `userrecaptcha` |
-| reCAPTCHA v3 | `userrecaptcha` + `version=v3` |
-| hCaptcha | `hcaptcha` |
-
-**Cost:** typically $0.001–$0.003 per CAPTCHA solved.
-For most scraping scenarios this is negligible.
-
-> 🔑 Get your API key at **[2captcha.com](https://2captcha.com)**
+pyppeteer's own bundled Chromium does not launch on every machine; pass
+`--chromium-path` at another Chromium if it fails to start.
 
 ---
 
-## Anti-Detect Browser & Fingerprint Spoofing
+## Measured, 2026-09-14
 
-Running a headless browser without anti-detection is a quick way to get blocked.
-This scraper implements multiple evasion layers:
+Every figure here comes from a run whose artefacts are in the repo's history.
+Shares are given as ranges where they legitimately vary between runs.
 
-### Stealth JS patches
-- `navigator.webdriver` → `undefined` (removes automation flag)
-- `window.chrome` → real Chrome object mock
-- `Notification.permission` patch via Permissions API
-- Fake `navigator.plugins` (5 plugins, not 0)
-- Fixed `navigator.languages` → `['en-US', 'en']`
+| | |
+|---|---|
+| rows from one served response | 41 (Berlin) to 359 (Toronto); 294–358 for a large area |
+| rows with a price | 95%–100% |
+| rows with structured enrichment | 66% (Paris) to 99% (Toronto), where the category publishes any; **0%** for jobs, services and community |
+| rows with coordinates | 89% (New York) to 0% (any non-US area) |
+| `--pages 3`, walking | 1,091 rows, counter reached 903 in 45 steps, repeatable across runs |
+| time for one batch, JavaScript off | ~2.5s |
+| currencies observed | USD, CAD, EUR, JPY, MXN |
 
-### Fingerprint randomization
-Every session gets a **unique browser fingerprint**:
-- 🖥️ Random User-Agent (Windows / macOS / Linux · Chrome / Firefox / Safari)
-- 📐 Random viewport (1280×800 to 2560×1440)
-- 🌍 Random locale (`en-US`, `en-GB`, `en-CA`, `en-AU`)
-- 🕐 Random timezone (US timezones)
-- ⚙️ Random `hardwareConcurrency` (2–16 cores)
-- 💾 Random `deviceMemory` (4–16 GB)
-- 🖼️ Canvas noise injection (defeats canvas fingerprinting)
+---
 
-### Human-like behavior
-- Randomized delays between requests (configurable min/max)
-- Automatic cookie banner dismissal
-- Realistic page load wait strategies
+## Usage
 
-### Proxy support
-Route traffic through your own proxy pool:
 ```bash
---proxy http://username:password@proxy-host:3128
+# one batch of a result list
+python playwright_scraper.py --url "https://www.craigslist.org/search/area/newyork?cat=sss"
+
+# three batches, walking the rendered list
+python playwright_scraper.py --url "https://www.craigslist.org/search/area/berlin?cat=sss" --pages 3
+
+# one advert, with body, attributes, images and timestamps
+python playwright_scraper.py --mode posting \
+    --url "https://www.craigslist.org/view/d/new-york-dji-neo-fly-more-combo-with/qTuXqiGHU326VAGH4msB5A"
+
+# a price band, which is how you get past the 10,000 ceiling
+python playwright_scraper.py --url "https://www.craigslist.org/search/area/newyork?cat=sss&min_price=0&max_price=100"
 ```
-Use [2prx.com](https://2prx.com) residential proxies for maximum success rate.
+
+Exit codes: `0` ok · `1` crash · `2` bad usage · `3` blocked · `4` zero rows ·
+`5` remote API error · `6` partial. A run writes `<out>.meta.json` beside its
+output recording the status, the stop reason and which batches failed; a
+**failed** run writes none, and leaves the previous good output in place.
+
+`diff_runs.py` compares two runs by `sku` and refuses to compare runs that are
+not both `complete`.
 
 ---
 
-## CLI Reference
+## Checks
 
+```bash
+python3 smoke_test.py     # 455 checks, no network, no browser
+pytest                    # the same suite, wrapped
 ```
-usage: craigslist_scraper_playwright.py [-h]
-  [--city CITY]
-  [--categories [CATEGORIES ...]]
-  [--query QUERY]
-  [--max-pages MAX_PAGES]
-  [--format {json,csv,both}]
-  [--output-dir OUTPUT_DIR]
-  [--proxy PROXY]
-  [--captcha-key CAPTCHA_KEY]
-  [--no-headless]
-  [--no-stealth]
-  [--no-fingerprint]
-  [--delay-min DELAY_MIN]
-  [--delay-max DELAY_MAX]
 
-Options:
-  --city            Craigslist city slug (default: newyork)
-  --categories      Space-separated list of categories (default: all)
-  --query           Optional search keyword
-  --max-pages       Pages per category (default: 3)
-  --format          Output format: json | csv | both (default: json)
-  --output-dir      Output directory (default: ./output)
-  --proxy           Proxy URL: http://user:pass@host:port
-  --captcha-key     Your 2captcha.com API key
-  --no-headless     Show browser window (useful for debugging)
-  --no-stealth      Disable anti-detect JS patches
-  --no-fingerprint  Disable fingerprint randomization
-  --delay-min       Min delay between requests in seconds (default: 1.5)
-  --delay-max       Max delay between requests in seconds (default: 4.5)
-```
+The fixtures are real captures, trimmed to whole nodes and verified to parse
+identically to the untrimmed originals, with one advert's phone number and one
+broker's name and licence numbers replaced by placeholders that show.
 
 ---
 
-## Need More Power?
+## Licence
 
-If you need **high-volume scraping**, **rotating residential proxies**,
-or a **managed CAPTCHA solving infrastructure**, check out our services at
-**[2captcha.com](https://2captcha.com)**:
-
-| Service | What it solves |
-|---|---|
-| 🤖 **CAPTCHA API** | reCAPTCHA, hCaptcha, Cloudflare Turnstile, GeeTest and 20+ more |
-| 🖐️ **Anti-Detect Browser** | Unique fingerprints per session, managed profiles |
-| 🌐 **Residential Proxies** | Rotating IPs, city-level targeting, unlimited bandwidth |
-
----
-
-## Technology Stack
-
-| Engine | Language | Stealth | Async | CAPTCHA |
-|---|---|---|---|---|
-| **Playwright** | Python | ✅ | ✅ | ✅ |
-| **Selenium** | Python | ✅ | ❌ | ✅ |
-| **Puppeteer** | Node.js | ✅ (plugin) | ✅ | ✅ |
-
----
-
-## Project Structure
-
-```
-craigslist-scraper/
-├── craigslist_playwright_scraper.py   # Playwright scraper (recommended)
-├── craigslist_selenium_scraper.py     # Selenium scraper
-├── craigslist_puppeteer_scraper.js    # Puppeteer scraper (Node.js)
-├── requirements.txt                   # Python dependencies
-├── package.json                       # Node.js dependencies
-├── output/                            # Scraped data (auto-created)
-│   ├── for_sale_20240401_180000.json
-│   ├── jobs_20240401_180100.csv
-│   └── all_categories_20240401_185000.json
-└── README.md
-```
-
----
-
-## requirements.txt
-
-```
-playwright>=1.44.0
-httpx>=0.27.0
-selenium>=4.21.0
-webdriver-manager>=4.0.1
-```
-
----
-
-## License
-
-MIT © [2captcha.com](https://2scraper.com)
-
-**[⭐ Star on GitHub](https://github.com/2scraper/craigslist-scraper)**
-· **[🐛 Report an Issue](https://github.com/2scraper/craigslist-scraper/issues)**
-· **[💬 Discussions](https://github.com/2scraper/craigslist-scraper/discussions)**
+MIT. This is a tool for reading a public listing site; what you do with the
+data, and whether that is allowed where you are, is yours to decide.
