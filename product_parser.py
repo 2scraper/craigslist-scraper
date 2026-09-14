@@ -457,11 +457,27 @@ def detect_page_state(html: str, status: Optional[int], url: str = "") -> str:
     if container is not None:
         if container.select(SELECTORS["static_result"]):
             return "content"
-        # The rendered SPA removes the static list once it takes over, so a
-        # rendered page with cards is content even though the container it
+        # The application removes the static list once it takes over, so a
+        # page with rendered cards is content even though the container they
         # came from is now empty.
         if soup.select(SELECTORS["rendered_card"]):
             return "content"
+        # An EMPTY container is two different pages, and telling them apart
+        # matters: one is a correct answer and the other is a page caught
+        # mid-handover that will be fine in a moment.
+        #
+        # The application empties the container BEFORE it paints its grid, so
+        # for a few seconds a perfectly good listing looks exactly like a
+        # query that matched nothing. Found by running the Selenium engine:
+        # `--pages 3` reported 0 rows and exit 4 on a page holding 329
+        # structured items.
+        #
+        # The structured data is what separates them. A page mid-handover
+        # still carries its JSON-LD `ItemList`; a genuinely empty result set
+        # carries none -- measured 0 items against a nonsense query, and 329
+        # on the page that was caught mid-handover.
+        if _item_list(_json_ld_blocks(soup)):
+            return "unpainted"
         return "empty"
 
     if soup.select(SELECTORS["rendered_card"]):
