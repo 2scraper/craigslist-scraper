@@ -1833,6 +1833,22 @@ def test_finish_run():
 def test_diff():
     section("diff_runs")
     ok = True
+    # Every tracked field must BE a column. This tuple was inherited watching
+    # `sold` and `sold_is_floor`, which this repo's schema does not have -- so
+    # two of its eight comparisons were no-ops on every row of every diff,
+    # while the columns a poster actually edits were not watched at all.
+    import diff_runs as _diff
+    columns = {f.name for f in fields(Product)}
+    unknown = sorted(set(_diff.TRACKED_FIELDS) - columns)
+    ok &= check("every field diff_runs tracks is a real column%s"
+                % ("" if not unknown else " (%s)" % unknown), not unknown)
+    # And a field that is null on every row by the site's design is not worth
+    # a comparison that can only ever be null-to-null.
+    always_null = {"brand", "original_price", "discount_pct", "rating",
+                   "review_count", "in_stock"}
+    pointless = sorted(set(_diff.TRACKED_FIELDS) & always_null)
+    ok &= check("and none of them is a column this site never fills%s"
+                % ("" if not pointless else " (%s)" % pointless), not pointless)
     a = parse_products(LISTING_NEWYORK, LISTING_URL, page=1)[:3]
     b = [Product(**{f.name: getattr(r, f.name) for f in fields(Product)}) for r in a]
     b[0].price = (b[0].price or 0) + 100
@@ -2088,6 +2104,51 @@ def test_wording():
         for phrase, instead in banned.items():
             ok &= check("%s does not say %r (use: %s)" % (name, phrase, instead),
                         phrase.lower() not in low)
+    return ok
+
+
+def test_no_file_describes_another_site():
+    section("Wording: this repo describes THIS site")
+    ok = True
+    # Every file here was copied from a sibling repo, and a copied file that
+    # still names the other site is not a cosmetic problem: it is a shipped
+    # document making measured claims about something else. This repo shipped
+    # `scraper_api_client.py` describing Tokopedia's grid, its five-product
+    # fetch and its Indonesian exit, in a public repository, and nothing
+    # noticed -- no entry point imports that module, so the engine checks did
+    # not reach it, and `--help` looked self-consistent.
+    siblings = ("tokopedia", "farfetch", "mediamarkt", "etsy", "amazon",
+                "catawiki", "spinny")
+    for name, text in _shipped_text():
+        if name == os.path.basename(__file__):
+            continue
+        low = text.lower()
+        for sibling in siblings:
+            hits = low.count(sibling)
+            # A NAMED comparison is legitimate -- "a sibling repo does X" is
+            # how the measured differences between these repos get recorded --
+            # so what fails is a file that leans on another site's name
+            # repeatedly, which is what an unadapted copy looks like.
+            ok &= check("%s does not read as a %s file (%d mentions)"
+                        % (name, sibling, hits), hits <= 2)
+    return ok
+
+
+def test_every_document_referenced_exists():
+    section("Documents")
+    ok = True
+    # A dangling reference sends a reader looking for a file that is not
+    # there, which is worse than not mentioning it. `--dump-html`'s help
+    # pointed at a TROUBLESHOOTING.md this repo did not have.
+    referenced = set()
+    for name, text in _shipped_text():
+        if name == os.path.basename(__file__):
+            continue
+        for doc in re.findall(r'\b([A-Z][A-Z_]+\.md)\b', text):
+            referenced.add(doc)
+    for doc in sorted(referenced):
+        ok &= check("%s is referenced and exists" % doc,
+                    os.path.exists(os.path.join(REPO_ROOT, doc)))
     return ok
 
 
@@ -2526,6 +2587,8 @@ def main():
     ok &= test_shared_constants_are_used_consistently()
     ok &= test_policy_constants_have_consumers()
     ok &= test_wording()
+    ok &= test_no_file_describes_another_site()
+    ok &= test_every_document_referenced_exists()
     ok &= test_removed_flags_stay_removed()
     ok &= test_no_undefined_names()
     ok &= test_dockerfile_copies_what_it_runs()

@@ -4,8 +4,8 @@ product_parser.py
 Everything this repo knows about Craigslist lives in this file.
 
 Two things about this site shape the whole module, and both were measured
-rather than assumed (see FINDINGS.md in the working tree for the captures and
-the numbers).
+rather than assumed. The numbers are in the comments beside the code that
+rests on them.
 
 **The served markup is richer than the rendered page.** Craigslist ships a
 no-JS fallback -- `<ol class="cl-static-search-results">`, hidden by CSS

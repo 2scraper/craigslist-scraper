@@ -1,64 +1,65 @@
 #!/usr/bin/env python3
 """
-tokopedia-scraper — 2captcha Scraper API edition (fourth engine)
-=================================================================
+craigslist-scraper -- 2captcha Scraper API edition (fourth engine)
+==================================================================
 
 A fourth way to run this scraper. Unlike playwright_scraper.py /
 puppeteer_scraper.py / selenium_scraper.py, this one manages **no browser and
 no CDP session of its own**: it POSTs a URL to 2captcha's separate **Scraper
-API** (https://scraper.2captcha.com — a different product from the Scraping
+API** (https://scraper.2captcha.com -- a different product from the Scraping
 Browser API the other three reach through --cdp-endpoint), gets HTML back over
 plain HTTPS, and feeds it to this project's product_parser.
 
-Why you would want it: no Chromium to install, no CDP plumbing, runs from a
-tiny container or a lambda.
+ON THIS SITE IT IS A FIRST-CLASS PATH, which is unusual
+-------------------------------------------------------
+A sibling repo's copy of this file opens by warning that its site is a poor
+fit for a browserless fetch, and returns five products where a browser
+returns sixty. The opposite is true here, and for the same structural reason
+read the other way round: Craigslist serves a COMPLETE result list in its
+first response, with the page's JSON-LD beside it, and only afterwards
+replaces it with a JavaScript grid. A single fetch gets the whole thing.
 
-WHAT THIS SITE NEEDS — READ THIS FIRST
---------------------------------------
-Tokopedia is a POOR fit for a browserless path, and this client is here for
-completeness rather than as a recommendation. It works, and it returns a
-FRACTION of the products.
+Measured 2026-09-14, `tasks/sync` with NO CDP routing at all:
 
-Measured 2026-09-10, `tasks/sync` routed through a Scraping Browser session
-against a category listing:
+    upstream status      200
+    HTML                 510,928 bytes
+    rows parsed          350
+    with a price         346
+    with structured data 302
+    with coordinates     302
+    wall clock           ~5s
+    cost                 $0.0005
 
-    upstream status   200
-    HTML              416,939 bytes
-    products parsed   5
-    cost              $0.0005
+Against 353 / 349 / 314 / 314 from `playwright_scraper.py` on the same URL:
+the same columns, the same currency, within a percent of the same coverage.
+Two runs forty seconds apart returned all 350 of the same ids, so the path is
+stable rather than lucky.
 
-Five, against **60** from the same URL through `playwright_scraper.py`. The
-reason is structural rather than fixable here: Tokopedia hydrates its grid
-from client-side GraphQL, 60 tiles at a time, and only as the page is
-SCROLLED. A single fetch captures whatever the first paint happened to
-contain — about five tiles on a category page, and on a SEARCH page zero,
-because a search grid has no server-rendered container at all.
+What it cannot do is walk. `--pages` does not exist here, because batches
+beyond the first live behind the site's virtualised grid and need a browser
+to slide. If you want more than the first ~350 rows of a listing, use
+`playwright_scraper.py --pages N`, or narrow the URL with the site's own
+filters and fetch each narrowed URL with this client -- which is cheap enough
+that doing so is reasonable.
 
-So this path cannot see a full listing, by construction. It is kept because
-it costs nothing to keep, because `--cdp-url` routes it through a Scraping
-Browser session (which is what makes it reach the site at all — its own exit
-is a datacentre address, and Tokopedia answers those with nothing), and
-because a browserless fetch is genuinely the right tool on other sites in
-this family where the grid is server-rendered.
-
-If you are reading this because your run came back with five rows: that is
-this client working correctly. Use `playwright_scraper.py --cdp-endpoint`,
-which scrolls.
+`--cdp-url` routes the fetch through a Scraping Browser session. It is NOT
+needed on this site: the Scraper API's own exit was served without it,
+measured above. Use it when you want a specific exit country.
 
 Usage
 -----
-    # routed through a Scraping Browser API session, which is what makes it
-    # reach the site at all
-    python3 scraper_api_client.py \
-        --url "https://www.tokopedia.com/p/makanan-minuman/minuman/kopi-bubuk" \
-        --cdp-url "ws://user:pass@cb.2captcha.com:9222" --timeout 90
+    python3 scraper_api_client.py \\
+        --url "https://www.craigslist.org/search/area/newyork?cat=sss"
+
+    # a price band, which is how you cover more than one fetch can hold
+    python3 scraper_api_client.py \\
+        --url "https://www.craigslist.org/search/area/newyork?cat=sss&min_price=0&max_price=100"
 
     # the key comes from $TWOCAPTCHA_KEY and the endpoint from
-    # $TOKOPEDIA_CDP_ENDPOINT, so neither needs to be typed — a secret in
+    # $CRAIGSLIST_CDP_ENDPOINT, so neither needs to be typed -- a secret in
     # argv is readable by anything that can run `ps`
 
 Requires: pip install -r requirements.txt
-          (no playwright/selenium/pyppeteer needed for this engine)
 """
 
 import argparse
@@ -234,7 +235,7 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
         with open(dump, "w", encoding="utf-8") as f:
             f.write(html)
         logger.error(
-            "Tokopedia did not serve the Scraper API's request (upstream "
+            "Craigslist did not serve the Scraper API's request (upstream "
             "HTTP %s, %d bytes) — saved to %s. Measured 2026-09-10: the "
             "Scraper API's own exit is a datacentre address, and this site "
             "answers those with NOTHING, while the same task routed through "
@@ -271,13 +272,17 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Tokopedia scraper — 2captcha Scraper API edition (no "
-                    "local browser). NOTE: these pages DO need JavaScript, "
-                    "and their grid hydrates only as the page is scrolled, "
-                    "so a single fetch returns about 5 products where a "
-                    "browser engine returns 60. Pass --cdp-url to reach the "
-                    "site at all; see this file's docstring for the measured "
-                    "numbers, and prefer playwright_scraper.py.")
+        description="Craigslist scraper -- 2captcha Scraper API edition (no "
+                    "local browser). On THIS site that is a first-class path "
+                    "rather than a fallback: Craigslist serves a complete "
+                    "result list in its first response, so one fetch returned "
+                    "350 rows -- against 353 from playwright_scraper.py on "
+                    "the same URL, same columns, within a percent of the same "
+                    "coverage, for $0.0005 in about five seconds. What it "
+                    "cannot do is WALK: there is no --pages here, because "
+                    "batches beyond the first live behind the site's "
+                    "virtualised grid. --cdp-url is optional -- the API's own "
+                    "exit was served without it.")
     # NOT required: prefer the TWOCAPTCHA_KEY env var. A key passed on the
     # command line is visible to anyone who can run `ps`, and it lands in
     # shell history and in any log that echoes the command line.
@@ -285,14 +290,14 @@ def parse_args():
                    help="2captcha.com API key (sent as a Bearer token). "
                         "Defaults to $TWOCAPTCHA_KEY, which is the safer way to pass it.")
     p.add_argument("--url", default=None,
-                   help="Tokopedia listing URL — a category listing "
+                   help="Craigslist listing URL -- a result list "
                         "(/p/<cat>/<sub>/<subsub>) is the only kind this path "
                         "can read at all, since a search grid has no "
                         "server-rendered container. Required, unless "
-                        "TOKOPEDIA_URL is set in the environment or in .env.")
+                        "CRAIGSLIST_URL is set in the environment or in .env.")
     p.add_argument("--category", default=None, help="Label to tag output rows with. Defaults to the category segment of the URL, so the column is never empty just because the flag was omitted.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
-    p.add_argument("--out", default="tokopedia_products_scraperapi", help="Output file prefix")
+    p.add_argument("--out", default="craigslist_products_scraperapi", help="Output file prefix")
     p.add_argument("--timeout", type=int, default=60,
                    help=f"API-side task timeout in seconds (1-{MAX_API_TIMEOUT}, default 60)")
     p.add_argument("--cdp-url", default=None,
@@ -323,11 +328,11 @@ def parse_args():
     # --cdp-endpoint, so the env mapping is spelled out instead of defaulted.
     env_config.apply(args, keys={
         "TWOCAPTCHA_KEY": "key",
-        "TOKOPEDIA_CDP_ENDPOINT": "cdp_url",
-        "TOKOPEDIA_URL": "url",
+        "CRAIGSLIST_CDP_ENDPOINT": "cdp_url",
+        "CRAIGSLIST_URL": "url",
     })
     if not args.url:
-        p.error("no --url given, and TOKOPEDIA_URL is not set in the environment "
+        p.error("no --url given, and CRAIGSLIST_URL is not set in the environment "
                 "or in .env.")
     return args
 

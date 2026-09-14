@@ -193,7 +193,7 @@ def dedupe_by_key(rows: Sequence[Any], seen: Set[str], key: str = "sku") -> List
 
     `seen` is mutated in place, so callers thread the same set across pages —
     a stale or repeating next-page link then re-parses a page without
-    duplicating its rows into the final output. On Tokopedia this DOES fire
+    duplicating its rows into the final output. On Craigslist this DOES fire
     on healthy runs: page 1 and page 2 of one category listing shared
     exactly 3 products, all three from the "cheaper products" carousel that
     appears on every page of a listing. So a small non-zero drop count here
@@ -267,7 +267,7 @@ EXIT_NO_PRODUCTS = 4
 # search genuinely matched nothing" from "something stood between us and the
 # content". See product_parser.detect_bot_challenge.
 #
-# On Tokopedia this code specifically does NOT cover the three ways to get a
+# On Craigslist this code specifically does NOT cover the ways to get a
 # real page with no products on it: a `/p/<slug>` discovery hub, which
 # answers 200 with banners and carousels and no grid; a search whose query
 # matches nothing ("Oops, produk nggak ditemukan"); and one page past the
@@ -276,7 +276,7 @@ EXIT_NO_PRODUCTS = 4
 # any of them as blocked would send a user hunting for a proxy problem that
 # does not exist.
 #
-# What EXIT_BLOCKED means here is unusually literal: Tokopedia sends an
+# What EXIT_BLOCKED means here: Craigslist has never been observed sending an
 # address it has scored NOTHING at all. No status code, no interstitial, no
 # vendor marker — the HTTP/2 stream is reset and the run sees a connection
 # error rather than a page.
@@ -337,7 +337,7 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     and those populate different columns — `sold` is a FLOOR on a listing
     row and exact on a product row, so diffing one against the other would
     report every row as changed. diff_runs.py refuses a pair whose modes or
-    sources differ. `source` is `tokopedia.com` on every row of every run
+    sources differ. `source` is `craigslist.org` on every row of every run
     here, since the site has one storefront and one currency; it is kept
     because consumers read these columns by name across the family.
 
@@ -418,7 +418,7 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # the DATA (a page contributed nothing not already seen, so the listing is
 # over), while the second is a property of a CSS SELECTOR and is therefore
 # the weaker signal — a renamed attribute looks identical to a short
-# catalogue. On Tokopedia that ordering is not a preference, it is the only
+# catalogue. On Craigslist that ordering is not a preference, it is the only
 # thing that works: the site publishes NO `link[rel=next]` and no numbered
 # anchors anywhere, a CATEGORY listing is addressable by `?page=N`, and a
 # SEARCH is not addressable at all — `?page=2` there returns an empty result

@@ -40,7 +40,7 @@ not the check caught it.
 
 ## Reporting a site change
 
-Tokopedia changing its markup is the normal way this stops working, and it
+Craigslist changing its markup is the normal way this stops working, and it
 has its own issue template. The detail that saves the most time is WHICH
 anchor broke, because on this site there is no structured data on a listing
 page to fall back on — measured zero `application/ld+json`, zero
@@ -57,7 +57,8 @@ not the primary path by preference, it is the only one.
 3. **The reading ORDER inside the tile** — badge, title, price, was-price,
    rating, sold, shop, location. The field reads rest on it, deliberately,
    because the classes around each field are build hashes:
-   `<span class="+tnoqZhn89+NHUA43BpiJg==">` is the title today. If Tokopedia
+   `li.cl-static-search-result` is the site's own name for a result entry
+   and has outlived several deploys, but if Craigslist
    reorders a tile, `title` and the prices are what break.
 4. **`span.flip`**, the shop name and the shop's city in that order, exactly
    two per search tile.
@@ -97,13 +98,13 @@ history needs a decision, not a red check on every push.
 
 Then the rest of the presentation, in the order that matters:
 
-1. `python3 smoke_test.py` green, and the canary dispatched at least once —
-   including its SKIP branch, which is what runs when the
-   `TOKOPEDIA_CDP_ENDPOINT` secret is absent. The canary has **no schedule**: a
-   Scraping Browser credential on this account does not survive a day, so it
-   runs on demand with a fresh secret rather than painting a badge that has
-   tested nothing. Put a schedule back the day a long-lived credential
-   exists.
+1. `python3 smoke_test.py` green, and the canary dispatched at least once.
+   Unlike its siblings this canary needs **no secret** and runs nightly:
+   Craigslist serves datacentre addresses, and a GitHub runner is one. It
+   makes two live runs — a walking one for the rendered grid and a one-batch
+   one for the served list — because a walking run alone never exercises the
+   served list at all, which is where the structured columns come from. That
+   gap was found by dispatching it, not by reading it.
 2. The repo description, homepage and topics set (see the family notes on
    what those should say).
 3. Only then the row in the org profile README — and check it with an
@@ -129,7 +130,7 @@ silently regress:
   while their shop reports 16,679. Folding them into one column would make it
   mean different things in different modes.
 - **`sku` is the `/{shop}/{slug}` URL path, NOT the 19-digit tail most
-  slugs end in.** That tail is not the product id — the id Tokopedia's own
+  ids end in.** The 22-character token in a posting URL IS the id — the one
   app deep links use is `103490518624` for a product whose tail is
   `1731177319241910164` — and 4 of 40 listing URLs have no tail at all. A
   tail-derived sku would have been a different number than the site's and
@@ -138,7 +139,14 @@ silently regress:
   `sold_is_floor` is what says which. A tile prints `100rb+ terjual` for a
   product whose own page states `countSold` 207785. Without that flag one
   column would silently mean two things.
-- **A block is not a page here.** Tokopedia answers an address it has scored
+- **A block has never been observed here.** Craigslist served this repo's
+  development machine — a datacentre address in Germany — the full listing
+  with no proxy and no key. What it does to an address it has scored is
+  therefore NOT measured, and nothing in this repo claims to know. Detection
+  is structural: was this page built out of the site's own assets? That
+  answers correctly for an interstitial, a block page and Chromium's own
+  error page alike. The paragraph this replaced described a sibling site,
+  which answers
   with nothing at all, so there is no challenge to solve and a solving key
   buys nothing. Block detection is INVERTED: a served page is recognised by
   the site's own asset host and the absence of one is the signal.
@@ -163,7 +171,7 @@ silently regress:
   API's auto-solve extension injects `cf-turnstile` into every page it
   loads (so extension scripts are stripped before markers are looked for,
   and `cf-turnstile` is deliberately not in the list here), and the bare
-  string `akamai` was in this repo's own list while Tokopedia — which is
+  string `akamai` was in a sibling repo's list while its site — which is
   fronted by Akamai — names `akamaihd.net` in its own performance script on
   every page it serves. A live run of a hub reported exit 3 on a 191 KB
   page the site had plainly served.
@@ -197,7 +205,7 @@ reason, not merely unfashionable.
 
 Most do not — the suite covers the parser, the writers, the captcha classifier
 and the CLI contract against inline fixtures. If yours genuinely needs
-tokopedia.com, say in the PR what you ran, which URL and page kind, from
+craigslist.org, say in the PR what you ran, which URL and page kind, from
 which exit, and what you got — including the price and image coverage
 percentages the run prints, and the scroll trace from the sidecar. Note that
 a run from a datacentre address gets NO RESPONSE AT ALL, so "it returned
@@ -216,7 +224,7 @@ account is not a result worth having.
 
 ## Scope
 
-This repo scrapes **public pages** on Tokopedia: search grids, category
+This repo scrapes **public pages** on Craigslist: result lists and
 listings and product pages, exactly as an anonymous visitor is served them.
 Out of scope: anything behind a login, anything that submits a form, and
 anything that defeats a protection rather than passing it the way an ordinary

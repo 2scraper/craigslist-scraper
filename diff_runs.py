@@ -47,17 +47,24 @@ from typing import Dict, List, Optional, Tuple
 from output_writer import UNIQUE_BY_SKU_MODES
 
 # `sold` is tracked alongside the price, and `sold_is_floor` with it, because
-# without the flag a `sold` change is unreadable: a tile's figure is a floor
-# the site rounded down ("100rb+ terjual" = 100_000) while a product page's
-# is exact (207785 for that same product). A monitor watching `sold` alone
-# would report a jump of 107,785 the moment someone diffed a listing run
-# against a product run, and none of it would be a sale.
 #
-# No `price_is_from` / `price_max` here: a Tokopedia tile prints one price,
-# not a range. If variant pricing ever appears on a listing page, this is
-# where it goes.
-TRACKED_FIELDS = ("price", "original_price", "discount_pct", "currency",
-                  "in_stock", "sold", "sold_is_floor", "rating")
+# WHAT CAN ACTUALLY CHANGE ON THIS SITE, and nothing else.
+#
+# This tuple was inherited tracking `sold` and `sold_is_floor`, which are not
+# columns in this repo's schema at all -- so those two comparisons were
+# no-ops on every row of every diff, while `title`, `location` and
+# `image_count`, which a poster edits routinely, were not watched at all. A
+# diff tool watching columns that cannot change and ignoring ones that do is
+# worse than no diff tool, because it reports "nothing changed" with
+# confidence.
+#
+# Deliberately NOT here: `original_price`, `discount_pct`, `in_stock` and
+# `rating`. Craigslist publishes none of them anywhere -- they are null on
+# every row of every run, so tracking them would add four comparisons that
+# can only ever be null-to-null. See output_writer.Product, where each says
+# which measurement establishes that.
+TRACKED_FIELDS = ("price", "currency", "title", "location", "image_count",
+                  "updated_at")
 
 # The subset of TRACKED_FIELDS whose comparability depends on price_source
 # matching between the two runs — see diff_products.
@@ -279,20 +286,19 @@ def _check_comparable(args) -> bool:
     # A CURRENCY MISMATCH, which on this site should be impossible — and is
     # checked anyway.
     #
-    # The sibling repos guard cross-storefront diffs with `source`: eleven
-    # country hostnames, so a run of one against another is refused on the
-    # hostname alone. Tokopedia is ONE host with ONE currency — measured
-    # 2026-09-10, an Indonesian exit and a US exit returned identical markup,
-    # identical `<html lang="id">`, IDR prices both times and zero price
-    # differences across the 68 products both runs saw — so `source` is
-    # "tokopedia.com" on both sides and there is no storefront split for it
-    # to catch.
+    # The sibling repos guard cross-storefront diffs with `source`: a country
+    # hostname each, so a run of one against another is refused on the
+    # hostname alone. That does not work here. Craigslist is ONE hostname
+    # worldwide and the AREA is a path segment -- so `source` is
+    # "craigslist.org" on both sides of every diff, including a diff of Tokyo
+    # against Toronto.
     #
-    # This check is therefore expected never to fire, and it is kept for one
-    # reason: if it EVER does, it means either the site has grown a second
-    # currency or something in this repo is inventing them, and both of those
-    # make every row's price incomparable. A guard that costs nothing and
-    # fails loudly beats discovering it from a diff.
+    # The currency is what catches it instead, and on this site it is a real
+    # signal rather than a formality: the currency follows the area, measured
+    # 2026-09-14 across eight areas fetched through one exit, which returned
+    # USD, CAD, EUR, JPY and MXN. Two runs quoting different currencies are
+    # two different areas, and every row's price is incomparable between
+    # them.
     currencies = {}
     for label, path in (("--old", args.old), ("--new", args.new)):
         try:
@@ -309,12 +315,12 @@ def _check_comparable(args) -> bool:
                 f"comparable with each other, let alone with another run's.")
     if len(set(currencies.values())) > 1:
         problems.append(
-            f"the two runs quote different currencies ({currencies}). "
-            f"Tokopedia quotes IDR to every visitor — verified identical from "
-            f"two exit countries — so this should be impossible: either the "
-            f"site has grown a second currency or one of these runs invented "
-            f"one, and either way every row's price is incomparable. "
-            f"`source` cannot catch it: it is 'tokopedia.com' on both sides.")
+            f"the two runs quote different currencies ({currencies}), which "
+            f"means they are two different AREAS -- the currency follows the "
+            f"area on this site, and eight areas fetched through one exit "
+            f"returned five different ones. Every row's price is incomparable "
+            f"between them. `source` cannot catch this: Craigslist is one "
+            f"hostname worldwide, so it reads 'craigslist.org' on both sides.")
 
     if not problems:
         return True
@@ -334,7 +340,7 @@ def _check_comparable(args) -> bool:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Diff two tokopedia-scraper JSON outputs by sku.")
+        description="Diff two craigslist-scraper JSON outputs by sku.")
     p.add_argument("--old", required=True, help="Earlier run's JSON output.")
     p.add_argument("--new", required=True, help="Later run's JSON output.")
     p.add_argument("--out", default=None,
@@ -344,11 +350,11 @@ def parse_args():
                    help="Treat a price move smaller than PCT%% as an exchange-"
                         "rate tick rather than a price change: reported "
                         "separately and ignored by --fail-on-change. Default 0 "
-                        "(report every rupiah), which is what a Tokopedia "
-                        "run wants: the site quotes IDR to every visitor, so "
-                        "there is no conversion drift to absorb. The flag is "
-                        "inherited from this scraper family; set it non-zero "
-                        "only with a reason you can state.")
+                        "(report every cent), which is what a Craigslist "
+                        "run wants: a run covers one area and therefore one "
+                        "currency, so there is no conversion drift to absorb. "
+                        "The flag is inherited from this scraper family; set "
+                        "it non-zero only with a reason you can state.")
     p.add_argument("--fail-on-change", action="store_true",
                    help="Exit 1 if anything was added, removed or changed — "
                         "for a cron job that should only notify on a real diff.")

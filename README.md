@@ -133,6 +133,16 @@ so a flag could only disagree with the URL.
 category links and nothing else, so a run against it honestly reports 0 rows
 and exit 4. A result list looks like `/search/area/newyork?cat=sss`.
 
+**A busy area turns over faster than you expect.** Measured on New York for
+sale: a walk of ~1,000 rows covered **under two hours** of postings — 451 rows
+posted within the last hour, 278 in the hour before. Two runs two hours apart
+shared **no ids at all**, while two runs forty seconds apart shared all 350.
+So `diff_runs.py` against that URL at a two-hour interval reports everything
+as delisted and everything as new, correctly and uselessly. Diff at short
+intervals, or narrow the URL to something that moves more slowly. It also puts
+the 10,000-result ceiling in perspective: on that area it is about twenty
+hours of postings.
+
 **The site's own data is sometimes nonsense, and is reported as-is.** One
 Tokyo advert publishes ¥2,500,013,000 for a set of IKEA shelves, in both its
 structured data and its printed price, while its title says ¥13,000 each.
@@ -191,6 +201,28 @@ about 200 rows with no coordinates — where pyppeteer reads the served list:
 **352 rows, 100% priced, 96% with coordinates**. For a single-batch run over a
 remote profile, pyppeteer is the better choice.
 
+### And a fourth way, with no browser at all
+
+`scraper_api_client.py` POSTs a URL to 2captcha's **Scraper API** and parses
+the HTML it gets back. On most sites in this family that is a compromise; here
+it is a first-class path, for the same structural reason the rest of this page
+keeps coming back to — Craigslist serves a complete result list in its first
+response.
+
+```bash
+python3 scraper_api_client.py --url "https://www.craigslist.org/search/area/newyork?cat=sss"
+```
+
+**350 rows, ~5 seconds, $0.0005, no Chromium anywhere** — against 353 from
+`playwright_scraper.py` on the same URL, with the same columns and within a
+percent of the same coverage. Two runs forty seconds apart returned all 350 of
+the same ids.
+
+What it cannot do is walk: there is no `--pages` there, because batches beyond
+the first live behind the site's virtualised grid. For more than one fetch's
+worth, either use a browser engine or narrow the URL and fetch each narrowed
+URL — which at that price is reasonable.
+
 Install exactly one engine. Their pins are mutually unsatisfiable —
 playwright and pyppeteer disagree on `pyee`, pyppeteer and selenium on
 `urllib3` — so use a virtualenv per engine if you want more than one.
@@ -219,6 +251,8 @@ Shares are given as ranges where they legitimately vary between runs.
 | `--pages 3`, walking | 1,091 rows, counter reached 903 in 45 steps, repeatable across runs |
 | time for one batch, JavaScript off | ~2.5s |
 | currencies observed | USD, CAD, EUR, JPY, MXN |
+| Scraper API, one fetch, no browser | 350 rows, ~5s, $0.0005 |
+| turnover, New York for sale | ~500 new adverts an hour; ~1,000 rows span under two hours |
 
 ---
 
@@ -252,7 +286,7 @@ not both `complete`.
 ## Checks
 
 ```bash
-python3 smoke_test.py     # 455 checks, no network, no browser
+python3 smoke_test.py     # 642 checks, no network, no browser
 pytest                    # the same suite, wrapped
 ```
 
