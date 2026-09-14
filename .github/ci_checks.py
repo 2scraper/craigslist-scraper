@@ -75,6 +75,16 @@ CREDENTIAL_ALLOWED = (
     "u:supersecret@", "login:supersecret@",   # the redaction fixtures
     "u:pass@h1", "u:pass@h2",       # the global-masking fixture
     "only:1",                       # a one-exit pool fixture
+    # This repo's own masking fixtures, in smoke_test.py. Allowed by their
+    # exact shape rather than by loosening the pattern: a real login still
+    # fails, and a check that fails on its own repository is a check nobody
+    # can read -- which is how three repos in this family ended up with a
+    # credential scan that nothing ran.
+    "u:p@a.example", "u:p@b.example", "u:p@c.example",
+    "user:hunter2@exit.example",
+    "u:secret@a:1", "u:secret@b:2",
+    "user:pw@exit.example",
+    "exampleaccount", "examplepw",  # the filled-in endpoint fixture
 )
 
 # A 2captcha API key is a 32-character hex string.

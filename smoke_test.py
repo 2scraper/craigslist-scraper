@@ -2417,3 +2417,143 @@ def test_engines(skips):
         ok &= check("%s.scrape takes exactly the parsed args" % module_name,
                     list(sig.parameters) == ["args"])
     return ok
+
+
+def test_sample_output():
+    section("sample_output")
+    ok = True
+    for name in ("sample_output.json", "sample_output.csv"):
+        ok &= check("%s ships with the repo" % name,
+                    os.path.exists(os.path.join(REPO_ROOT, name)))
+    path = os.path.join(REPO_ROOT, "sample_output.json")
+    if not os.path.exists(path):
+        return False
+    rows = json.load(open(path, encoding="utf-8"))
+    expected = [f.name for f in fields(Product)]
+    ok &= check("its columns are the current schema, in order",
+                all(list(r) == expected for r in rows))
+    # Cut from a real run rather than written by hand, and chosen to show
+    # both price sources: a sample where every row came from structured data
+    # would misrepresent what a run of this site returns.
+    ok &= check("it shows more than one price_source",
+                len({r["price_source"] for r in rows}) > 1)
+    ok &= check("every row has a real sku and a real url",
+                all(r["sku"] and r["url"].startswith("https://www.craigslist.org/view/d/")
+                    for r in rows))
+    ok &= check("and the ids are the site's own shape",
+                all(re.fullmatch(r"[A-Za-z0-9_-]{22}", r["sku"]) for r in rows))
+    with open(os.path.join(REPO_ROOT, "sample_output.csv"), encoding="utf-8") as fh:
+        csv_rows = list(csv.DictReader(fh))
+    ok &= check("the CSV sample matches the JSON one",
+                len(csv_rows) == len(rows) and list(csv_rows[0]) == expected)
+    return ok
+
+
+def test_captcha():
+    section("captcha_solver")
+    ok = True
+    # Detection stays BROAD -- which challenge a visitor meets depends on the
+    # exit and on what the address has been doing -- while SPENDING is
+    # narrow. The two are different decisions and this repo keeps them apart.
+    # The two formats this detector documents, and a fabricated sitekey of a
+    # REAL length -- it requires 20+ characters, which is what Google's are,
+    # so a short made-up key would test nothing.
+    sitekey = "6Lc" + "ABCDEFGHIJKLMNOPQRSTUVWX"
+    ok &= check("an inline grecaptcha.execute call is recognised",
+                captcha_solver.detect_recaptcha_v3(
+                    "<script>grecaptcha.execute('%s', {action: 'verify'})</script>"
+                    % sitekey, LISTING_URL) is not None)
+    ok &= check("a <captcha-widget> declaring v3 is recognised",
+                captcha_solver.detect_recaptcha_v3(
+                    '<captcha-widget data-captcha-type="recaptcha" '
+                    'data-version="v3" data-sitekey="%s" '
+                    'data-action="verify"></captcha-widget>' % sitekey,
+                    LISTING_URL) is not None)
+    # A widget the SITE declares as v3 while shipping a v2 loader is the
+    # reconciliation case: v3 parameters sent for a v2-invisible widget buy a
+    # token the site rejects. This detector reads the markup; the live-page
+    # one reads the loader, and the two are reconciled rather than
+    # short-circuited.
+    ok &= check("a v2 widget is not reported as v3",
+                captcha_solver.detect_recaptcha_v3(
+                    '<captcha-widget data-captcha-type="recaptcha" '
+                    'data-version="v2" data-sitekey="%s"></captcha-widget>'
+                    % sitekey, LISTING_URL) is None)
+    ok &= check("a page with no challenge yields nothing",
+                captcha_solver.detect_recaptcha_v3(LISTING_NEWYORK,
+                                                   LISTING_URL) is None)
+    # And on this site, nothing at all: 22 captures, zero markers of any
+    # vendor, zero occurrences of the word.
+    for label, html in (("a listing", LISTING_NEWYORK), ("a posting", POSTING_CARS)):
+        ok &= check("%s carries no challenge to detect" % label,
+                    "captcha" not in html.lower())
+    return ok
+
+
+# ==========================================================================
+# Runner
+# ==========================================================================
+
+def main():
+    print("smoke_test.py -- craigslist-scraper")
+    print("Zero network, zero browser. Fixtures are real captures, trimmed "
+          "and verified.")
+    skips = []
+    ok = True
+    ok &= test_urls()
+    ok &= test_pagination()
+    ok &= test_prices()
+    ok &= test_listing_values()
+    ok &= test_subsequence_alignment()
+    ok &= test_no_structured_data()
+    ok &= test_null_island()
+    ok &= test_tokyo_publishes_its_own_nonsense()
+    ok &= test_posting_values()
+    ok &= test_posting_variants()
+    ok &= test_page_state()
+    ok &= test_chromium_error_page()
+    ok &= test_markers_match_no_good_page()
+    ok &= test_rendered_grid()
+    ok &= test_walk_machinery()
+    ok &= test_page_flow_policy()
+    ok &= test_output_contract()
+    ok &= test_writers()
+    ok &= test_finish_run()
+    ok &= test_diff()
+    ok &= test_engine_flag_parity()
+    ok &= test_engines_import_their_driver_at_module_level()
+    ok &= test_engine_calls_bind_against_the_real_signatures()
+    ok &= test_shared_constants_are_used_consistently()
+    ok &= test_policy_constants_have_consumers()
+    ok &= test_wording()
+    ok &= test_removed_flags_stay_removed()
+    ok &= test_no_undefined_names()
+    ok &= test_dockerfile_copies_what_it_runs()
+    ok &= test_env_config()
+    ok &= test_proxy_pool()
+    ok &= test_credentials_never_reach_a_log()
+    ok &= test_no_capture_leaks()
+    ok &= test_ci_checks_is_actually_wired_up()
+    ok &= test_sample_output()
+    ok &= test_captcha()
+    ok &= test_engines(skips)
+
+    print()
+    if _failures:
+        print("%d check(s) FAILED:" % len(_failures))
+        for failure in _failures:
+            print("  - %s" % failure)
+    if skips:
+        # "skipped, engine absent" reads exactly like a passing run, so CI's
+        # engine-smoke job installs each engine in its own virtualenv and
+        # fails if this list is non-empty for the engine it installed.
+        print("%d engine group(s) SKIPPED -- an optional engine library is "
+              "absent:" % len(skips))
+        for skip in skips:
+            print("  - %s" % skip)
+    print("smoke_test: %s" % ("OK" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
