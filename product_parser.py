@@ -327,7 +327,16 @@ def _normalize_amount(raw: str) -> Optional[float]:
         head, _, tail = s.rpartition(",")
         # Exactly three trailing digits is a thousands grouping: no currency
         # here has a three-digit subunit, so "$1,234" is 1234.
-        s = (head + tail) if len(tail) == 3 else s.replace(",", ".")
+        #
+        # ALL the separators come out, not just the last one. Removing only
+        # the final group left "$1,234,567" as "1,234567", which float()
+        # rejects, so every price with two or more groups came back as NO
+        # PRICE AT ALL -- silently, on a column that looked healthy because
+        # most adverts are cheap. It bites hardest exactly where prices are
+        # large: a 1,700,000 MXN business, a 2,500,013,000 JPY listing, any
+        # US property or vehicle over a million. Found by pinning a value
+        # rather than a coverage percentage.
+        s = s.replace(",", "") if len(tail) == 3 else s.replace(",", ".")
     elif has_dot:
         head, _, tail = s.rpartition(".")
         if len(tail) == 3:
@@ -879,15 +888,28 @@ def _posting_times(soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _posting_images(html: str) -> List[str]:
-    """One URL per photograph, deduped across the site's size renditions."""
-    best: Dict[str, str] = {}
+    """One URL per photograph, deduped across the site's size renditions.
+
+    In DOCUMENT ORDER, which is the advert's own order, so `image_url` is the
+    photograph the poster put first rather than whichever URL happens to sort
+    first. An earlier version sorted by the URL string and therefore picked an
+    arbitrary image as the primary one on every multi-image advert -- found by
+    trimming a fixture, when the trimmed copy disagreed with the original
+    about which image came first.
+    """
+    best: Dict[str, tuple] = {}
+    order: List[str] = []
     for m in _IMAGE_RE.finditer(html or ""):
         image_id, size = m.group(1), m.group(2)
         w, h = (int(x) for x in size.split("x"))
         prev = best.get(image_id)
+        if prev is None:
+            order.append(image_id)
         if prev is None or (w * h) > prev[0]:
+            # Keep the largest rendition of each photograph, but at the
+            # position its FIRST rendition appeared.
             best[image_id] = (w * h, m.group(0))
-    return [url for _, url in sorted(best.values(), key=lambda t: t[1])]
+    return [best[image_id][1] for image_id in order]
 
 
 def _posting_geo(soup: BeautifulSoup) -> Tuple[Optional[float], Optional[float]]:

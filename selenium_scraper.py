@@ -313,25 +313,48 @@ class _Session:
         self.driver.set_script_timeout(SCRIPT_TIMEOUT)
 
     def _apply_fingerprint(self):
-        from fingerprint_client import get_fingerprint, playwright_init_script
+        from fingerprint_client import (get_fingerprint, playwright_init_script,
+                                        fingerprint_user_agent)
         fp = get_fingerprint(self.args.twocaptcha_key, tags=self.args.fp_tags,
                              country=self.args.fp_country)
-        ua = (fp.get("userAgent") or {}).get("value")
+        # Through the shared helper, NOT by reaching into the response.
+        #
+        # This line read `fp["userAgent"]["value"]` -- a key the API returns
+        # in neither of its two formats -- so `--fingerprint` quietly set no
+        # user agent here at all while reporting that it had applied one. The
+        # API's own key is `userAgent.userAgent`, and the helper is where that
+        # knowledge lives precisely so three engines cannot each get it wrong
+        # separately. Verified against a live response, 2026-09-14.
+        ua = fingerprint_user_agent(fp)
+        intl = fp.get("intl") or {}
         script = playwright_init_script(fp)
         try:
             if ua:
                 self.driver.execute_cdp_cmd("Network.setUserAgentOverride",
                                             {"userAgent": ua})
+            else:
+                logger.warning("This fingerprint carries no user agent, so the "
+                               "browser keeps its own. That is a contradiction "
+                               "worth knowing about rather than a silent "
+                               "half-application.")
+            # The timezone the API states, which was not being applied at all.
+            # A fingerprint whose locale says America/New_York over a browser
+            # reporting Europe/Berlin is a mismatch of exactly the kind a
+            # fingerprint exists to avoid.
+            if intl.get("timeZone"):
+                self.driver.execute_cdp_cmd("Emulation.setTimezoneOverride",
+                                            {"timezoneId": intl["timeZone"]})
             # The same patch script the Playwright engine installs on its
             # context. Shared deliberately: two engines applying different
             # halves of one fingerprint would be a contradiction of exactly
             # the kind a fingerprint is meant to avoid.
             self.driver.execute_cdp_cmd(
                 "Page.addScriptToEvaluateOnNewDocument", {"source": script})
-            logger.info("Using 2captcha fingerprint %s (%s)", fp.get("id"),
-                        fp.get("country"))
+            logger.info("Using 2captcha fingerprint %s (%s), UA %s, timezone %s",
+                        fp.get("id"), fp.get("country"),
+                        "set" if ua else "NOT set", intl.get("timeZone") or "not stated")
         except WebDriverException as e:
-            logger.warning("Could not apply the fingerprint over CDP (%s) — "
+            logger.warning("Could not apply the fingerprint over CDP (%s) -- "
                            "continuing without it.", e)
 
     def relaunch(self):

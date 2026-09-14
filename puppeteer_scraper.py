@@ -174,7 +174,23 @@ class _AsyncBridge:
             return
         loop.default_exception_handler(context)
 
-    def run(self, coro, timeout: Optional[float] = DEFAULT_OP_TIMEOUT):
+    def run(self, awaitable, timeout: Optional[float] = DEFAULT_OP_TIMEOUT):
+        """Run one pyppeteer awaitable on the private loop, with a timeout.
+
+        Takes any AWAITABLE, not only a coroutine, and the difference is not
+        academic: `CDPSession.send` returns a Future rather than a coroutine,
+        so `run_coroutine_threadsafe` rejects it with "A coroutine object is
+        required" -- which is how the pyppeteer fingerprint path failed to
+        apply a timezone while reporting that it had carried on without one.
+        Every CDP call in this engine goes through here, so the wrapper is
+        cheaper than remembering which library function returns which.
+        """
+        if not asyncio.iscoroutine(awaitable):
+            async def _await_it(inner=awaitable):
+                return await inner
+            coro = _await_it()
+        else:
+            coro = awaitable
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
         try:
             return future.result(timeout)
@@ -394,8 +410,60 @@ class _Session:
         if credentials:
             self.bridge.run(self.page.authenticate(
                 {"username": credentials[0], "password": credentials[1]}))
+        if self.args.fingerprint:
+            self._apply_fingerprint()
         self._apply_javascript()
         return self
+
+    def _apply_fingerprint(self):
+        """Apply a 2captcha fingerprint to this page.
+
+        Only on the LOCAL branch. Over --cdp-endpoint the Scraping Browser
+        already has its own, and layering a second on top produces a mismatch
+        rather than better cover.
+
+        The user agent comes through `fingerprint_user_agent`, never by
+        reaching into the response: the API's key is `userAgent.userAgent`,
+        a sibling engine read `userAgent.value`, and the result was a flag
+        that reported success while setting nothing.
+        """
+        from fingerprint_client import (get_fingerprint, playwright_init_script,
+                                        fingerprint_user_agent)
+        fp = get_fingerprint(self.args.twocaptcha_key, tags=self.args.fp_tags,
+                             country=self.args.fp_country)
+        ua = fingerprint_user_agent(fp)
+        screen = fp.get("screen") or {}
+        intl = fp.get("intl") or {}
+        try:
+            if ua:
+                self.bridge.run(self.page.setUserAgent(ua))
+            else:
+                logger.warning("This fingerprint carries no user agent, so the "
+                               "browser keeps its own.")
+            if screen.get("outerWidth") and screen.get("outerHeight"):
+                self.bridge.run(self.page.setViewport({
+                    "width": int(screen["outerWidth"]),
+                    "height": int(screen["outerHeight"]),
+                    "deviceScaleFactor": float(screen.get("deviceScaleFactor") or 1)}))
+            # The timezone the API states. Applying the screen and the UA and
+            # not the clock is a contradiction of exactly the kind a
+            # fingerprint exists to avoid.
+            if intl.get("timeZone"):
+                cdp = self.bridge.run(self.page.target.createCDPSession())
+                self.bridge.run(cdp.send("Emulation.setTimezoneOverride",
+                                         {"timezoneId": intl["timeZone"]}))
+            # The same patch script the other two engines install, shared
+            # deliberately: two engines applying different halves of one
+            # fingerprint would contradict each other.
+            self.bridge.run(self.page.evaluateOnNewDocument(
+                playwright_init_script(fp)))
+            logger.info("Using 2captcha fingerprint %s (%s), UA %s, timezone %s",
+                        fp.get("id"), fp.get("country"),
+                        "set" if ua else "NOT set",
+                        intl.get("timeZone") or "not stated")
+        except Exception as e:  # noqa: BLE001 -- a fingerprint is not worth a run
+            logger.warning("Could not apply the fingerprint (%s) -- continuing "
+                           "without it.", e)
 
     def _apply_javascript(self):
         """Switch the site's application off when this run does not need it.
@@ -1178,6 +1246,27 @@ def parse_args():
     p.add_argument("--proxy-shuffle", action="store_true")
     p.add_argument("--proxy-block-retries", type=int, default=2)
     p.add_argument("--twocaptcha-key", default=None, help="2captcha.com API key")
+    p.add_argument("--fingerprint", action="store_true",
+                   help="Fetch a browser fingerprint from 2captcha's "
+                        "Fingerprint API and apply it to the launched "
+                        "browser. Needs --twocaptcha-key. Ignored with "
+                        "--cdp-endpoint, where the Scraping Browser supplies "
+                        "its own.")
+    # ONE OS-family tag, not a list -- and the default is what makes
+    # --fingerprint work at all. It shipped as "Windows,Chrome,Desktop" in
+    # this family, which the API rejects with HTTP 400, so --fingerprint
+    # failed on every invocation. Measured 2026-09-14: `Windows` succeeds;
+    # `Windows,Chrome,Desktop`, `Chrome` and `Desktop` each 400.
+    p.add_argument("--fp-tags", default="Windows",
+                   help="ONE OS-family tag for the fingerprint filter: "
+                        "Windows, Microsoft Windows or Android. NOT a list -- "
+                        "Chrome, Desktop and Mobile are each rejected by the "
+                        "API with 400. Use --fp-country to narrow further. "
+                        "(default: Windows)")
+    p.add_argument("--fp-country", default=None,
+                   help="Fingerprint country, ISO 3166-1 alpha-2. Match it to "
+                        "your proxy's exit country -- a US fingerprint on a "
+                        "German IP is a contradiction.")
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 rows were found.")
     p.add_argument("--captcha-api", choices=["v2", "v1"], default="v2")

@@ -66,3 +66,9 @@ env/
 .env
 *.key
 secrets*
+
+# Any .env variant, however it was renamed. `.env` alone is not enough: a
+# `.env.hold` made while testing was committed with a live key in it, and the
+# repo private is the only reason that was recoverable.
+.env*
+!.env.example
