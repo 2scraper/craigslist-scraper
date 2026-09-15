@@ -8,6 +8,23 @@ as a command-line toolkit can. A **patch** release means fixes — not that
 every flag is frozen. Where a fix changes what a default does, the release
 notes say so first, because nobody should discover that from their output.
 
+## [0.1.2] — 2026-09-14
+
+> **The licence FILE was wrong in v0.1.0 and v0.1.1.** The badge, the
+> README's own Licence section and `pyproject.toml` all said MIT, while
+> `LICENSE` was 35 KB of GPL-3.0 inherited from the prototype this repo
+> replaced. Both tarballs carry that file. It is now the MIT text every other
+> repo in this family ships, which is what the rest of this one has claimed
+> all along.
+
+### Fixed
+
+- `LICENSE` is MIT, matching what `pyproject.toml`, the README badge and the
+  README's Licence section have said since 0.1.0.
+- A check now asserts that the LICENSE file agrees with everything that
+  claims a licence, and that no GPL text survives. Verified by putting the
+  old file back: it fails on both counts.
+
 ## [0.1.1] — 2026-09-14
 
 > **If you took v0.1.0, replace it.** Its `scraper_api_client.py` — a fourth,
@@ -56,7 +73,7 @@ notes say so first, because nobody should discover that from their output.
   exist, every field `diff_runs` tracks must be a real column this site
   fills, and every public name must be read somewhere.
 
-Offline checks: 647, up from 455.
+Offline checks: 653, up from 455.
 
 ## [0.1.0] — 2026-09-14
 

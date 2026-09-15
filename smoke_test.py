@@ -2182,6 +2182,49 @@ def test_no_file_describes_another_site():
     return ok
 
 
+def test_licence_file_agrees_with_what_is_claimed():
+    section("Licence")
+    ok = True
+    # A repo can claim one licence in three places and ship another, and
+    # nothing notices -- which is what happened here: the badge, the README's
+    # own Licence section and pyproject.toml all said MIT while LICENSE was
+    # 35 KB of GPL-3.0, inherited from the prototype this repo replaced and
+    # never swapped. It went out public, in two releases, before anyone
+    # opened the file.
+    path = os.path.join(REPO_ROOT, "LICENSE")
+    ok &= check("a LICENSE file ships", os.path.exists(path))
+    if not os.path.exists(path):
+        return False
+    text = open(path, encoding="utf-8").read()
+    first = text.strip().splitlines()[0].strip() if text.strip() else ""
+    ok &= check("its first line names the licence (%r)" % first[:40],
+                first.lower().endswith("license") or first.lower().endswith("licence"))
+
+    claimed = set()
+    project = open(os.path.join(REPO_ROOT, "pyproject.toml"), encoding="utf-8").read()
+    for match in re.findall(r'^license\s*=\s*"([^"]+)"', project, re.M):
+        claimed.add(match.strip().upper())
+    readme = open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8").read()
+    for match in re.findall(r'licen[cs]e[:\s-]+([A-Za-z0-9.-]+)', readme, re.I):
+        token = match.strip().upper().rstrip(".")
+        if token in ("MIT", "APACHE-2.0", "GPL-3.0", "BSD-3-CLAUSE", "MPL-2.0"):
+            claimed.add(token)
+
+    ok &= check("something states which licence this is%s"
+                % ("" if claimed else " -- nothing does"), bool(claimed))
+    ok &= check("and every place that states one agrees (%s)"
+                % ", ".join(sorted(claimed)) if claimed else "",
+                len(claimed) <= 1)
+    for name in sorted(claimed):
+        # The file itself has the last word: it is what a court and a package
+        # manager read.
+        ok &= check("the LICENSE file is the %s it is claimed to be" % name,
+                    name.split("-")[0].lower() in first.lower())
+    ok &= check("no GPL text survives from the prototype",
+                "GNU GENERAL PUBLIC" not in text.upper())
+    return ok
+
+
 def test_every_document_referenced_exists():
     section("Documents")
     ok = True
@@ -2700,6 +2743,7 @@ def main():
     ok &= test_no_public_name_is_unread()
     ok &= test_wording()
     ok &= test_no_file_describes_another_site()
+    ok &= test_licence_file_agrees_with_what_is_claimed()
     ok &= test_every_document_referenced_exists()
     ok &= test_removed_flags_stay_removed()
     ok &= test_no_undefined_names()
