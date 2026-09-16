@@ -2301,6 +2301,37 @@ def test_no_undefined_names():
         ok &= check("%s resolves every name it uses%s"
                     % (name, "" if not missing else " (%s)" % missing),
                     not missing)
+
+    # And a statement that can never RUN. The walk above cannot see this
+    # class at all, by design: it pools every binding in the file rather than
+    # tracking scopes, so a name used inside dead code passes as long as
+    # anything else in the module binds it. What was hiding in that blind
+    # spot here: a function whose `def` line had been lost, leaving its
+    # docstring and body absorbed into the end of the function above it as
+    # unreachable code. Identical in six repos of this family, present since
+    # each one's first commit, invisible to import, --help, compileall and
+    # every green run of this suite. Narrow on purpose -- it claims nothing
+    # about reachability in general, only about a block whose control flow
+    # has already left -- and measured across the family it found six real
+    # problems and zero false positives.
+    for name in sorted(f for f in os.listdir(REPO_ROOT) if f.endswith(".py")):
+        tree = ast.parse(open(os.path.join(REPO_ROOT, name),
+                              encoding="utf-8").read())
+        dead = []
+        for node in ast.walk(tree):
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(node, field, None)
+                if not isinstance(block, list):
+                    continue
+                for i, stmt in enumerate(block[:-1]):
+                    if isinstance(stmt, (ast.Return, ast.Raise,
+                                         ast.Continue, ast.Break)):
+                        dead.append(block[i + 1].lineno)
+                        break
+        ok &= check("%s has no statement the control flow can never reach%s"
+                    % (name, "" if not dead else ": line %d" % min(dead)),
+                    not dead)
+
     return ok
 
 
