@@ -40,6 +40,9 @@ notes say so first, because nobody should discover that from their output.
   called it, it described another site's URLs, and it compared the boolean
   `page_flow.comparable()` of two URLs rather than the URLs themselves.
 
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.1.3] — 2026-09-16
 
 ### Fixed
