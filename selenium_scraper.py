@@ -452,20 +452,6 @@ def _parse_for_mode(html: str, url: str, args, page_num: int = 1) -> List:
     return parse_products(html, url, page=page_num, category=args.category)
 
 
-def _same_url(a: str, b: str) -> bool:
-    """Whether two URLs address the same page.
-
-    Delegates to page_flow rather than reimplementing the comparison, so all
-    three engines cannot drift on it. In particular Craigslist writes some of its
-    next-links percent-DECODED (".../kühlen-gefrieren-32.html") while a
-    pasted URL is encoded (".../k%C3%BChlen-gefrieren-32.html"); an engine
-    with its own copy of this got that wrong and silently fell back to
-    sequential fetching on every accented category.
-    """
-    return page_flow.comparable(a) == page_flow.comparable(b)
-
-
-
 def _next_page_candidates(session, page_num: int) -> List[str]:
     """The site's own next-page link, resolved by the browser, or None.
 
@@ -509,10 +495,9 @@ def handle_captcha_if_present(session, args) -> bool:
 
     NOTE what this cannot help with. No challenge of any kind has been
     observed on this site across 22 captures, and what Craigslist serves a
-    refused address has not been measured here at all. What this cannot
-    help with in any case is a refusal that is not an HTTP
-    403 carrying its own error page with no challenge on it, so no solve
-    applies there and none is attempted. See product_parser.detect_page_state.
+    refused address has not been measured here at all. A refusal with no
+    widget on it has nothing to solve, so no solve applies there and none is
+    attempted. See product_parser.detect_page_state.
     """
     driver = session.driver
     d = _driver(session)
@@ -627,12 +612,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         html = d["content"]() or ""
         state = page_flow.classify(html, url=d["current_url"]())
 
-        # "Not painted yet" is not a fault. A SEARCH grid arrives with the
-        # A REAL state on this site rather than a theoretical one: the
-        # application removes the served result list about twenty seconds in
-        # and paints its own grid several seconds later, so there is a window
-        # in which the page has neither. Waiting is the right answer there --
-        # retrying would throw away a page that is about to be fine. Mirrors
+        # "Not painted yet" is not a fault. A REAL state on this site rather
+        # than a theoretical one: the application removes the served result
+        # list about twenty seconds in and paints its own grid several
+        # seconds later, so there is a window in which the page has neither.
+        # Waiting is the right answer there -- retrying would throw away a
+        # page that is about to be fine. Mirrors
         # playwright_scraper exactly; see page_flow.should_wait.
         if page_flow.should_wait(state):
             js = args.mode == "listing" and page_flow.javascript_needed(args.pages)
@@ -677,7 +662,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         if not page_flow.should_retry(state):
             # "content" and "empty" are both final answers. An empty page is
-            # a CORRECT one — a hub category has no grid — so retrying it
+            # a CORRECT one — an area landing page has no results — so retrying it
             # would re-confirm the same right answer, and rotating the exit
             # would blame an address for the URL it was given.
             break
@@ -833,9 +818,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # --cdp-endpoint the Scraping Browser's own auto-solve extension injects
     # such markers into every page it loads.
     # Only for a state page_flow already counts as BLOCKED. An EMPTY page is
-    # a correct answer, and a live run of a /p/<slug> hub reported exit 3 on
-    # a page the site had plainly served because the hub's own performance
-    # script names `akamaihd.net`. Mirrors playwright_scraper exactly.
+    # a correct answer, and in a sibling repo (tokopedia-scraper) a served
+    # hub page reported exit 3 because that site's own performance script
+    # names `akamaihd.net`. Mirrors playwright_scraper exactly.
     vendor = (detect_bot_challenge(html, url=d["current_url"]())
               if page_flow.counts_as_blocked(state) else None)
     if vendor:
@@ -965,11 +950,8 @@ def scrape(args) -> int:
     blocked = False
     # Both modes are one row per product, so `sku` is the key for both.
     dedupe_key = "sku"
-    # Only --mode product is single-page. A SHOP FRONT paginates exactly like
-    # a category listing — ?page=N, the same tiles — and treating it as
-    # single-page made `--mode shop --pages 2` fetch one page and report
-    # "complete", which is the silent-success failure this family exists to
-    # avoid. Found on the first live shop run.
+    # Only --mode posting is single-page: one advert is the whole job, while
+    # a listing run walks a list. Mirrors playwright_scraper.
     stop_reason = "single_page_mode" if args.mode == "posting" else "completed"
 
     pool = proxy_pool_from_args(args)
@@ -1084,10 +1066,9 @@ def scrape(args) -> int:
                  if ok_pages else args.url)
 
     # One-per-run context, in the sidecar rather than repeated down a column.
-    # Mirrors the other two engines exactly: the seller's own facts in
-    # --mode product, and the scroll trace plus the page's own result header
-    # in --mode listing, because on an infinitely-scrolling site those are
-    # what say how much of the listing the run actually saw.
+    # Mirrors the other two engines exactly: the walk trace plus the page's
+    # own result header in --mode listing, because those are what say how
+    # much of the list the run actually saw. --mode posting has none.
     extra = None
     walks = {o.page_num: o.walk for o in outcomes if o.walk}
     headers = {o.page_num: o.header for o in outcomes if o.header}

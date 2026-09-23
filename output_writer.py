@@ -193,11 +193,7 @@ def dedupe_by_key(rows: Sequence[Any], seen: Set[str], key: str = "sku") -> List
 
     `seen` is mutated in place, so callers thread the same set across pages —
     a stale or repeating next-page link then re-parses a page without
-    duplicating its rows into the final output. On Craigslist this DOES fire
-    on healthy runs: page 1 and page 2 of one category listing shared
-    exactly 3 products, all three from the "cheaper products" carousel that
-    appears on every page of a listing. So a small non-zero drop count here
-    is expected and a large one is not.
+    duplicating its rows into the final output.
 
     A row with no key is always kept: there is nothing to check a duplicate
     against, and dropping it would be a silent data loss rather than a
@@ -268,18 +264,17 @@ EXIT_NO_PRODUCTS = 4
 # content". See product_parser.detect_bot_challenge.
 #
 # On Craigslist this code specifically does NOT cover the ways to get a
-# real page with no products on it: a `/p/<slug>` discovery hub, which
-# answers 200 with banners and carousels and no grid; a search whose query
-# matches nothing ("Oops, produk nggak ditemukan"); and one page past the
-# end of a category listing. All three are EXIT_NO_PRODUCTS — the request
-# was served exactly as asked and simply has no products on it. Reporting
-# any of them as blocked would send a user hunting for a proxy problem that
-# does not exist.
+# real page with no results on it: an area landing page (`/area/newyork`),
+# which carries that area's category links and nothing else, and a search
+# whose query matches nothing. Both are EXIT_NO_PRODUCTS — the request was
+# served exactly as asked and simply has no results on it. Reporting either
+# as blocked would send a user hunting for a proxy problem that does not
+# exist.
 #
-# What EXIT_BLOCKED means here: Craigslist has never been observed sending an
-# address it has scored NOTHING at all. No status code, no interstitial, no
-# vendor marker — the HTTP/2 stream is reset and the run sees a connection
-# error rather than a page.
+# What EXIT_BLOCKED means here: a response that was not built out of the
+# site's own assets (product_parser.served_by_craigslist). No refusal has
+# been observed on this site, so the test is structural rather than a
+# description of a measured block page.
 EXIT_BLOCKED = 3
 
 # Exit code for a run that gathered SOME rows and then stopped early — a
@@ -360,21 +355,19 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
       failed   — nothing was gathered at all
 
     `mode` and `source` are recorded because `mode` is not implied by the
-    repo: the same output prefix can hold a listing run or a product run,
-    and those populate different columns — `sold` is a FLOOR on a listing
-    row and exact on a product row, so diffing one against the other would
-    report every row as changed. diff_runs.py refuses a pair whose modes or
-    sources differ. `source` is `craigslist.org` on every row of every run
-    here, since the site has one storefront and one currency; it is kept
-    because consumers read these columns by name across the family.
+    repo: the same output prefix can hold a listing run or a posting run,
+    and those populate different columns — only a posting row carries the
+    body, attributes, images, timestamps and `post_id` — so diffing one
+    against the other would report every row as changed. diff_runs.py
+    refuses a pair whose modes or sources differ. `source` is
+    `craigslist.org` on every row of every run here; the currency follows
+    the area instead. It is kept because consumers read these columns by
+    name across the family.
 
     `extra` carries facts about the run that are not about any single row.
-    `--mode shop` uses it for the SELLER's own name, location, rating and
-    review count: a run covers exactly one shop, so those belong to the run
-    rather than repeated down a column, and the shop's review count (16679
-    on the captured seller) is a different number from its listings' own
-    (827 on one of them) — putting them in one column would make the schema
-    lie.
+    `--mode listing` uses it for the walk trace and the page's own result
+    header, which say how much of the list the run actually saw and which no
+    column can carry.
 
     `pages_failed` lists the pages that did not yield data, by number.
     `pages_completed` alone was enough only while pages were fetched strictly
@@ -397,8 +390,8 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }
     if extra:
-        # Merged rather than nested under a key, so a consumer reads
-        # `shop_rating` at the top level beside `products`. Run fields win a
+        # Merged rather than nested under a key, so a consumer reads each
+        # run fact at the top level beside `products`. Run fields win a
         # name collision: a caller cannot accidentally overwrite `status`.
         meta.update({k: v for k, v in extra.items() if k not in meta})
     return meta
@@ -447,13 +440,12 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # the weaker signal — a renamed attribute looks identical to a short
 # catalogue. On Craigslist that ordering is not a preference, it is the only
 # thing that works: the site publishes NO `link[rel=next]` and no numbered
-# anchors anywhere, a CATEGORY listing is addressable by `?page=N`, and a
-# SEARCH is not addressable at all — `?page=2` there returns an empty result
-# set rather than page 2. So "no new products" is the one termination
-# condition available on a search. See page_flow.pagination_is_addressable.
+# anchors anywhere, and `?page=2` returns a byte-identical copy of the first
+# response rather than page 2. So "no new products" is the one termination
+# condition available. See product_parser's pagination notes.
 #
-# "single_page_mode" is complete by construction: --mode product reads one
-# page because one page is all there is.
+# "single_page_mode" is complete by construction: --mode posting reads one
+# page because one advert is all there is.
 COMPLETE_STOP_REASONS = ("completed", "pagination_exhausted", "no_new_products",
                          "single_page_mode")
 

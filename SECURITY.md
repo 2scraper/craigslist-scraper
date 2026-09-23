@@ -11,7 +11,7 @@ public from the moment you press submit.
 
 If private reporting is unavailable to you, mail support@2captcha.com. That is
 2Captcha's general support address rather than a security-only one, so put
-**"tokopedia-scraper security"** in the subject — otherwise it lands in a queue
+**"craigslist-scraper security"** in the subject — otherwise it lands in a queue
 about API keys and billing and takes longer to reach the right person.
 
 **What helps most:** the version you are on (commit hash), the exact command,
@@ -53,10 +53,10 @@ In scope:
 
 Not because these do not matter, but because they belong somewhere else:
 
-- **Bypassing Tokopedia's bot protection.** This scraper drives an ordinary
-  browser and passes challenges the way a browser does. Anything about how
-  Akamai or reCAPTCHA behave is not a vulnerability in this repository.
-- **The scraper stopped working.** Etsy changing its markup is expected —
+- **Bypassing Craigslist's protections.** This scraper drives an ordinary
+  browser and is served what an anonymous visitor is served. How the site
+  decides whom to serve is not a vulnerability in this repository.
+- **The scraper stopped working.** Craigslist changing its markup is expected —
   file it as a normal issue, there is a template for exactly that.
 - **Anything about 2Captcha's services** — the solver API, the Scraping Browser
   API, proxies, fingerprints, billing, quotas. This repository is only a client
@@ -79,8 +79,8 @@ Not because these do not matter, but because they belong somewhere else:
 
 ## Supported versions
 
-`main` only. This project has no releases or version tags; fixes land on `main`
-and you update by pulling. If you are running an old clone, update before
+The latest release and `main`. Fixes land on `main` first and are then tagged;
+you update by pulling. If you are running an old clone, update before
 reporting.
 
 ## If you have leaked a key
