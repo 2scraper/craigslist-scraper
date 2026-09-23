@@ -8,6 +8,21 @@ as a command-line toolkit can. A **patch** release means fixes — not that
 every flag is frozen. Where a fix changes what a default does, the release
 notes say so first, because nobody should discover that from their output.
 
+## [Unreleased]
+
+### Fixed
+
+- **The Scraper API path (`scraper_api_client.py`) failed whenever a wait flag
+  was given, and never saw the target's status.** Measured 2026-09-23 against
+  the live `/tasks/sync` endpoint: `waitFor` sent as a JSON-encoded string
+  (what this client sent) is answered HTTP 422 "params.waitFor must be an
+  object" and is still billed ($0.0005); sent as an object it is answered
+  HTTP 200. It is now an object. And the response's `status` is the API's own
+  verdict ("success"), while the target site's HTTP code is `http_code` — the
+  client handed `status` onward, so a target 403/503 never reached the page
+  classifier. It now reads `http_code`, falling back to `status` only if that
+  is an integer. After the fix, one live call (`--wait-text craigslist` on the canary's New York search) answered HTTP 200, upstream 200, 301 rows.
+
 ## [0.1.3] — 2026-09-16
 
 ### Fixed
