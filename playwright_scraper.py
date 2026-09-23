@@ -334,23 +334,6 @@ def _next_url_from_page(page, args, page_num: int) -> Optional[str]:
     return candidates[0] if candidates else None
 
 
-def _same_url(a: str, b: str) -> bool:
-    """Whether two URLs address the same page.
-
-    Delegates to page_flow rather than reimplementing the comparison, so all
-    three engines cannot drift on it. An engine that carried its own copy of
-    this in a sibling repo went stale and silently fell back to sequential
-    fetching — the exact divergence page_flow.py exists to prevent,
-    reproduced inside one engine.
-
-    On this site the comparison has to strip a long tracking tail: a listing
-    anchor arrives with `?extParam=…keyword=kopi&search_id=…&src=search` and
-    a detail page's own canonical arrives with a UTM triple, so two views of
-    one page never match unless both sides are cleaned.
-    """
-    return page_flow.comparable(a) == page_flow.comparable(b)
-
-
 # Chromium's own names for "the proxy is the problem, not the site". Matched
 # on the error text because Playwright surfaces them as a generic Error.
 _PROXY_ERROR_MARKERS = (
@@ -722,11 +705,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # With a pool, each retry moves to a DIFFERENT exit and the budget is the
     # user's `--proxy-block-retries`. WITHOUT one — the ordinary case here,
     # because `--cdp-endpoint` brings its own exit — the retry re-fetches
-    # through the same access path, and that is worth doing on this site
-    # rather than giving up: a Scraping Browser profile was measured refusing
-    # two requests and serving the third. Zero was the family default and it
-    # made the first live run of this engine abandon page 1 on its first
-    # block without retrying once.
+    # through the same access path. No refusal has been observed on this
+    # site, so the budget is the family's default rather than a measured
+    # figure (see page_flow.BLOCK_RETRIES_WITHOUT_POOL).
     has_pool = bool(pool and len(pool) > 1)
     # `RETRY_ON_BLOCKED` is CONSULTED, not just documented. It was a
     # constant with a paragraph of justification that no engine read — a
@@ -789,17 +770,15 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         html = _content_when_settled(session.page) or ""
         state = _classify(session.page, html)
 
-        # "Not painted yet" is not a fault, and telling it apart from one is
-        # what the first live search run of this engine got wrong. A CATEGORY
-        # listing server-renders its grid container, so it classifies as
-        # content at domcontentloaded; a SEARCH grid arrives with the
-        # client-side GraphQL response, so at that moment the page is a
-        # 608 KB shell with no grid in it. Classified naively that is
-        # "unknown", "unknown" retries, and the run fetched the page twice,
-        # scrolled not at all and reported 0 rows with exit 4.
+        # "Not painted yet" is not a fault. A REAL state on this site rather
+        # than a theoretical one: the application removes the served result
+        # list about twenty seconds in and paints its own grid several
+        # seconds later, so there is a window in which the page has neither.
+        # Waiting is the right answer there -- retrying would throw away a
+        # page that is about to be fine.
         #
         # So wait for the anchor and re-classify BEFORE the retry decision.
-        # See page_flow.is_unpainted.
+        # See page_flow.should_wait.
         if page_flow.should_wait(state):
             wait_timeout = page_flow.content_timeout_ms(
                 args.mode, js=session.javascript)
@@ -851,18 +830,16 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         if not page_flow.should_retry(state):
             # "content" and "empty" are both final answers. An empty page is
-            # a CORRECT one — a hub category has no grid, and one page past
-            # the end of a listing has no products — so retrying it would
-            # spend the user's budget re-confirming the same right answer,
-            # and rotating the exit would blame an address for the URL it was
-            # given.
+            # a CORRECT one — an area landing page has no results of its
+            # own, and a search that matches nothing has none — so retrying
+            # it would spend the user's budget re-confirming the same right
+            # answer, and rotating the exit would blame an address for the
+            # URL it was given.
             break
 
         # Blocked or challenged. A different exit is the one thing that
         # plausibly changes the outcome: the ADDRESS is what was scored, not
-        # the URL, so retrying it unchanged would only confirm it. Measured
-        # 2026-09-09 — the same URL that answers 403 from a datacentre exit
-        # answers 200 from a residential one.
+        # the URL, so retrying it unchanged would only confirm it.
         if block_attempt < block_retries:
             if has_pool:
                 logger.warning("Page %d came back as %s from %s — retrying "
@@ -872,16 +849,14 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 pool.advance(f"{state} on page {page_num}")
                 session.relaunch()
             else:
-                # No pool, so nowhere else to go — but a plain re-fetch is
-                # what clears this on a Scraping Browser profile. The browser
+                # No pool, so nowhere else to go but a plain re-fetch. The browser
                 # is NOT relaunched: over `--cdp-endpoint` a profile allows
                 # one live connection, so tearing the session down and
                 # reconnecting risks `profile_locked` and would lose the very
                 # cookies the retry is meant to build on.
                 pause = args.retry_delay * (block_attempt + 1)
                 logger.warning("Page %d came back as %s — re-fetching through "
-                               "the same access path in %.1fs (%d/%d). On this "
-                               "site that is often what clears it.",
+                               "the same access path in %.1fs (%d/%d).",
                                page_num, state, pause, block_attempt + 1,
                                block_retries)
                 time.sleep(pause)
@@ -1055,10 +1030,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # is the "detected is not blocking" rule the captcha default follows,
     # applied to the blocking decision instead of the spending one. But
     # `state != "content"` is still too wide: an EMPTY page is a correct
-    # answer, and a live run of a /p/<slug> hub reported exit 3 on a 191 KB
-    # page the site had plainly served, because the hub's own performance
-    # script names `akamaihd.net` and "akamai" was in the marker list. Both
-    # halves were wrong; the marker is gone (see
+    # answer, and in a SIBLING repo (tokopedia-scraper) a live run of a hub
+    # page reported exit 3 on a 191 KB page that site had plainly served,
+    # because its own performance script names `akamaihd.net` and "akamai"
+    # was in the marker list. Both halves were wrong; the marker is gone (see
     # product_parser.BOT_CHALLENGE_MARKERS) and this now only refines the
     # REASON for a page the policy had already given up on.
     vendor = (detect_bot_challenge(html, url=session.page.url)
