@@ -87,8 +87,8 @@ Deliberately no `evaluate(js)`: passing JavaScript from here would decide its
 dialect for every driver, and they disagree -- Playwright and pyppeteer take
 `() => expr` while Selenium's `execute_script` takes a function body with an
 explicit `return`. So the OPERATION is named and each engine spells it in its
-own dialect. And on this site there is a second reason, inherited from a
-sibling repo: a page whose Content-Security-Policy forbids `unsafe-eval`
+own dialect. And there is a second reason, measured on a sibling repo
+(tokopedia-scraper): a page whose Content-Security-Policy forbids `unsafe-eval`
 kills any wait built on an evaluated string.
 
 Every value here is measured, the numbers are in the comments, and the

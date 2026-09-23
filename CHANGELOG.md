@@ -8,6 +8,41 @@ as a command-line toolkit can. A **patch** release means fixes — not that
 every flag is frozen. Where a fix changes what a default does, the release
 notes say so first, because nobody should discover that from their output.
 
+## [Unreleased]
+
+### Fixed
+
+- **Text copied from sibling repos that described their sites as this one.**
+  No behaviour changes except in two log messages:
+  - `puppeteer_scraper.py`'s exit-3 message claimed a residential exit was
+    "measured" to clear a refusal and that an Indonesian exit was compared.
+    Neither is true of Craigslist; it now says what the other two engines
+    say. `scraper_api_client.py`'s exit-3 message and its `--url` help
+    described another site's routes and datacentre gate the same way, and
+    `playwright_scraper.py`'s no-pool retry line claimed a re-fetch "is
+    often what clears it" on this site, where no refusal has been observed.
+  - `SECURITY.md` asked for a `tokopedia-scraper security` subject and named
+    another site's protection and markup; it also said this project has no
+    releases.
+  - Both issue templates were written for another marketplace (its URLs, its
+    bot manager, its currency rules, a tile overlay this repo does not
+    have). Rewritten from this repo's README and TROUBLESHOOTING.
+  - `CONTRIBUTING.md` described another site's anchors, seller ratings, sold
+    counts and a carousel-driven dedupe; rewritten from this repo's parser
+    and README.
+  - Comments and docstrings in the engines, `output_writer.py`,
+    `diff_runs.py` and `page_flow.py` that stated another site's pagination,
+    hub pages, empty-search copy, currency and block behaviour as
+    Craigslist's. Where a lesson came from a sibling it now names the
+    sibling.
+  - `requirements.txt` was headed `# tokopedia-scraper`.
+- **An unused `_same_url` helper removed from all three engines.** Nothing
+  called it, it described another site's URLs, and it compared the boolean
+  `page_flow.comparable()` of two URLs rather than the URLs themselves.
+
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.1.3] — 2026-09-16
 
 ### Fixed

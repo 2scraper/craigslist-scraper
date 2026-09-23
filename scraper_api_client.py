@@ -258,8 +258,9 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             f.write(html)
         logger.info("Raw HTML written to %s", args.dump_html)
 
-    # Same policy as the browser engines: the status decides the blocked
-    # case, because this site's refusal has no marker to detect.
+    # Same policy as the browser engines: the status and the structural
+    # served-by-Craigslist test decide the blocked case, because no refusal
+    # has been observed on this site to take a marker from.
     state = detect_page_state(html, status=upstream_status, url=args.url)
     if state == "blocked":
         dump = f"{args.out}_scraperapi_debug.html"
@@ -267,12 +268,12 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             f.write(html)
         logger.error(
             "Craigslist did not serve the Scraper API's request (upstream "
-            "HTTP %s, %d bytes) — saved to %s. Measured 2026-09-10: the "
-            "Scraper API's own exit is a datacentre address, and this site "
-            "answers those with NOTHING, while the same task routed through "
-            "a Scraping Browser session returned 200 and 417 KB. Pass "
-            "--cdp-url. This is exit 3, distinct from an empty result "
-            "(exit 4).", upstream_status, len(html), dump)
+            "HTTP %s, %d bytes) — saved to %s. This has not been observed "
+            "here: the Scraper API's own exit was served during this repo's "
+            "development. If it persists, --cdp-url routes the fetch "
+            "through a Scraping Browser session with a chosen exit. This is "
+            "exit 3, distinct from an empty result (exit 4).",
+            upstream_status, len(html), dump)
         return 3
 
     vendor = detect_bot_challenge(html)
@@ -321,10 +322,10 @@ def parse_args():
                    help="2captcha.com API key (sent as a Bearer token). "
                         "Defaults to $TWOCAPTCHA_KEY, which is the safer way to pass it.")
     p.add_argument("--url", default=None,
-                   help="Craigslist listing URL -- a result list "
-                        "(/p/<cat>/<sub>/<subsub>) is the only kind this path "
-                        "can read at all, since a search grid has no "
-                        "server-rendered container. Required, unless "
+                   help="Craigslist result-list URL, e.g. "
+                        "/search/area/newyork?cat=sss -- the first response "
+                        "carries the complete first batch, which is all this "
+                        "path reads. Required, unless "
                         "CRAIGSLIST_URL is set in the environment or in .env.")
     p.add_argument("--category", default=None, help="Label to tag output rows with. Defaults to the category segment of the URL, so the column is never empty just because the flag was omitted.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
