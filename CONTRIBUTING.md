@@ -42,39 +42,27 @@ not the check caught it.
 
 Craigslist changing its markup is the normal way this stops working, and it
 has its own issue template. The detail that saves the most time is WHICH
-anchor broke, because on this site there is no structured data on a listing
-page to fall back on — measured zero `application/ld+json`, zero
-`__NEXT_DATA__` and zero Apollo state across six captures — so the DOM is
-not the primary path by preference, it is the only one.
+anchor broke. A result list is read from two views of the first response
+(see the README's "How it reads the page"):
 
-1. **The grid container.** `[data-testid="divSRPContentProducts"]` on a
-   search page, `[data-ssr="productsCategoryL2/L3SSR"]` on a category
-   listing. If one of these moves the run reports 0 rows and exit 4, which
-   is loud.
-2. **The tile marker.** `[data-testid="imgLeg-c"]` on a search page (one per
-   tile), `[data-testid="divProductWrapper"]` inside
-   `a[data-testid="lnkProductContainer"]` on a category listing.
-3. **The reading ORDER inside the tile** — badge, title, price, was-price,
-   rating, sold, shop, location. The field reads rest on it, deliberately,
-   because the classes around each field are build hashes:
-   `li.cl-static-search-result` is the site's own name for a result entry
-   and has outlived several deploys, but if Craigslist
-   reorders a tile, `title` and the prices are what break.
-4. **`span.flip`**, the shop name and the shop's city in that order, exactly
-   two per search tile.
-
-The one place structured data does exist is a DETAIL page's
-`window.__cache` Apollo blob, which is where `--mode product` reads the real
-product id, the exact sold count and the review count.
+1. **The served no-JS list.** `ol.cl-static-search-results` holding one
+   `li.cl-static-search-result` per result, with the posting link matched on
+   its URL pattern (`/view/d/`). This is the spine: every row comes from it.
+   If it moves the run reports 0 rows and exit 4, which is loud.
+2. **The JSON-LD `ItemList`** beside it, which adds the structured price,
+   `priceCurrency`, coordinates and images. It is an order-preserving
+   subsequence of the served list, joined on title — never by position.
+   Jobs, services and community publish none at all, by design.
+3. **The rendered cards** (`[data-pid]`) and the header's `.visible-counts`,
+   which only a walking run (`--pages > 1`) reads.
 
 A third thing can break without any path failing: the **join** between the
-tiles and the structured data. When it breaks, the row count and the prices
-stay healthy while `in_stock` and part of `brand` quietly empty out — so
-every run logs its structured-price confirmation share per page and warns
-below a floor set PER PAGE KIND (search 8%, category 70%, shop 80%; the
-achievable share differs by a factor of eight between them). If you are
-reporting a change, that percentage and the page kind are the numbers to
-include.
+served list and the structured data. When it breaks, the row count and the
+prices stay healthy while currency and coordinates quietly empty out — so
+every run logs its structured-data coverage and warns below
+`ENRICHMENT_FLOOR`, applied only where the page publishes structured data
+at all. If you are reporting a change, that percentage, the area and the
+category are the numbers to include.
 
 `--dump-html PATH` writes the exact bytes the parser was given, on success as
 well as failure, and a run that finds nothing writes a dump and a screenshot
@@ -118,49 +106,35 @@ Then the rest of the presentation, in the order that matters:
 file of plain functions with inline HTML/JSON fixtures — no pytest, no
 conftest, no fixtures directory. Copy the nearest existing check and edit it.
 
-Five properties in this repo exist because they were once absent and cost real
-time. Tests pin all five, so a PR that breaks one will fail rather than
-silently regress:
+The properties below are part of this repo's contract. The suite pins them,
+so a PR that breaks one should fail rather than silently regress:
 
-- **`rating` is the LISTING's and `shop_rating` is the SELLER's.** The stars
-  printed on a tile are the shop's — every seller with more than one listing
-  on a captured page showed the same rating and count on all of them, 12
-  shops across two page kinds. A listing's own rating exists only on its
-  detail page, where two listings of one shop report 825 and 375 reviews
-  while their shop reports 16,679. Folding them into one column would make it
-  mean different things in different modes.
-- **`sku` is the `/{shop}/{slug}` URL path, NOT the 19-digit tail most
-  ids end in.** The 22-character token in a posting URL IS the id — the one
-  app deep links use is `103490518624` for a product whose tail is
-  `1731177319241910164` — and 4 of 40 listing URLs have no tail at all. A
-  tail-derived sku would have been a different number than the site's and
-  null on a tenth of every run, with nothing to say so.
-- **`sold` is a FLOOR on a listing row and exact on a product row**, and
-  `sold_is_floor` is what says which. A tile prints `100rb+ terjual` for a
-  product whose own page states `countSold` 207785. Without that flag one
-  column would silently mean two things.
+- **`sku` is the 22-character token in the posting URL.** JSON-LD carries no
+  `url`, no `sku` and no `offers.url` anywhere on this site, so every id in
+  every row comes from the URL; the classic numeric id is `post_id`, and only
+  a posting page carries it.
+- **The currency follows the AREA, not the exit IP, and a guessed one is
+  null.** Rows without structured data report `currency: null`, because the
+  printed `$` is ambiguous across the USD, CAD and MXN areas this site
+  serves.
 - **A block has never been observed here.** Craigslist served this repo's
   development machine — a datacentre address in Germany — the full listing
   with no proxy and no key. What it does to an address it has scored is
   therefore NOT measured, and nothing in this repo claims to know. Detection
   is structural: was this page built out of the site's own assets? That
   answers correctly for an interstitial, a block page and Chromium's own
-  error page alike. The paragraph this replaced described a sibling site,
-  which answers
-  with nothing at all, so there is no challenge to solve and a solving key
-  buys nothing. Block detection is INVERTED: a served page is recognised by
-  the site's own asset host and the absence of one is the signal.
-  `page_flow.STATE_POLICY` holds the retry/solve/blocked decision as data so
-  the three engines cannot disagree about it.
+  error page alike. `page_flow.STATE_POLICY` holds the retry/solve/blocked
+  decision as data so the three engines cannot disagree about it.
 - **A run that finds nothing writes nothing.** It must not replace a good output
   file with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes are a contract**, not decoration: `0` ok, `1` crash, `2` bad
-  usage, `3` blocked (the 403 refusal, or a challenge), `4` zero rows —
-  including a hub category, which is a correct answer — `5` remote API error,
+  usage, `3` blocked (a response not built out of the site's own assets),
+  `4` zero rows — including an area landing page, which is a correct answer
+  — `5` the content was never obtained,
   `6` partial. A pipeline branches on these.
-- **An EMPTY page is never retried and never counted as blocked.** A hub
-  category has no product grid and one page past the end of a listing has no
-  products; both are correct answers to the question that was asked.
+- **An EMPTY page is never retried and never counted as blocked.** An area
+  landing page has no results of its own and a search that matches nothing
+  has none; both are correct answers to the question that was asked.
   Retrying them spends the user's budget re-confirming the same answer, and
   rotating the exit blames an address for the URL it was given.
   `page_flow.STATE_POLICY` holds that for all three engines so they cannot
@@ -173,14 +147,10 @@ silently regress:
   and `cf-turnstile` is deliberately not in the list here), and the bare
   string `akamai` was in a sibling repo's list while its site — which is
   fronted by Akamai — names `akamaihd.net` in its own performance script on
-  every page it serves. A live run of a hub reported exit 3 on a 191 KB
-  page the site had plainly served.
-- **A sku already written by an earlier page of the same run is dropped, not
-  duplicated.** Unlike its sibling repos this DOES fire on healthy runs
-  here: page 1 and page 2 of one category listing shared exactly 3 products,
-  all three from the "cheaper products" carousel that appears on every page.
-  So a small non-zero drop count is expected and a large one is not. See
-  `dedupe_by_key` in `output_writer.py`.
+  every page it serves. A live run there reported exit 3 on a 191 KB page
+  that site had plainly served.
+- **A sku already written earlier in the same run is dropped, not
+  duplicated.** See `dedupe_by_key` in `output_writer.py`.
 
 There is also a naming check: certain phrases are banned repo-wide and the suite
 fails naming them. If it trips, read the message — the phrase is wrong for a
@@ -207,25 +177,19 @@ Most do not — the suite covers the parser, the writers, the captcha classifier
 and the CLI contract against inline fixtures. If yours genuinely needs
 craigslist.org, say in the PR what you ran, which URL and page kind, from
 which exit, and what you got — including the price and image coverage
-percentages the run prints, and the scroll trace from the sidecar. Note that
-a run from a datacentre address gets NO RESPONSE AT ALL, so "it returned
-nothing" from a VPS is not a finding. Product counts differ by category, by
-URL and by how far the scroll got, so a bare "worked for me" is not
-reproducible.
+percentages the run prints, and the walk trace from the sidecar. Row counts
+differ by area, by category and by how far the walk got, and a busy area
+turns over in hours, so a bare "worked for me" is not reproducible.
 
 **Run more than the primary engine.** "Mirror them exactly" is a design rule,
 not a verification: the first live run of the pyppeteer engine crashed on its
 FIRST fetch on a signature mismatch that four separate offline checks and 400
 green assertions had not caught.
 
-Do not add anything that submits the registration form. This project
-deliberately never does, and a captcha token proved valid by creating a real
-account is not a result worth having.
-
 ## Scope
 
-This repo scrapes **public pages** on Craigslist: result lists and
-listings and product pages, exactly as an anonymous visitor is served them.
+This repo scrapes **public pages** on Craigslist: result lists and single
+adverts, exactly as an anonymous visitor is served them.
 Out of scope: anything behind a login, anything that submits a form, and
 anything that defeats a protection rather than passing it the way an ordinary
 browser does.

@@ -74,13 +74,12 @@ logger = logging.getLogger("puppeteer_scraper")
 
 ITEM_LINK_SELECTOR = page_flow.READY_SELECTOR_LISTING
 
-# The lowest PRICE coverage that is still healthy, per page kind. Not a
-# share of rows that got a price at all -- 95%-100% across 14 captures. A
-# structured data at all (0 JSON-LD, 0 __NEXT_DATA__, 0 Apollo state on six
-# captures), so `price_source` is "dom" on every listing row and there is
-# nothing for a confirmation threshold to describe. What IS worth a floor is
-# the share of rows that got a price — 95/95 on both search captures and
-# 60/60 on both category captures.
+# The lowest PRICE coverage that is still healthy. Measured across 14
+# captures: 95%-100% on for-sale-type categories, 100% on housing, jobs,
+# services and community. ENRICHMENT_FLOOR is the structured-data share,
+# applied only to the rows that could carry it -- 66% (paris) to 99%
+# (toronto) where the page publishes any, and a measured zero where it
+# publishes none. Mirrors playwright_scraper.
 PRICE_FLOOR = 90
 ENRICHMENT_FLOOR = 60
 
@@ -575,28 +574,13 @@ def _parse_for_mode(html: str, url: str, args, page_num: int = 1) -> List:
     return parse_products(html, url, page=page_num, category=args.category)
 
 
-def _same_url(a: str, b: str) -> bool:
-    """Whether two URLs address the same page.
-
-    Delegates to page_flow rather than reimplementing the comparison, so all
-    three engines cannot drift on it. On this site the comparison has to
-    strip a long tracking tail: a listing anchor arrives with
-    `?extParam=…keyword=kopi&search_id=…&src=search` and a detail page's own
-    canonical arrives with a UTM triple, so two views of one page never
-    match unless both sides are cleaned. An engine with its own copy of
-    this in a sibling repo got the equivalent wrong and silently fell back
-    to sequential fetching.
-    """
-    return page_flow.comparable(a) == page_flow.comparable(b)
-
-
 def _next_page_candidates(session, page_num: int) -> List[str]:
     """The site's own next-page link, resolved, or None.
 
-    Returns EVERY candidate, filtered by page_flow to the ones that really do
-    paginate this listing: a shop front advertises its REVIEWS pagination
-    alongside its items, and following that one returns rows from the wrong
-    listing while reporting success.
+    Returns EVERY candidate, filtered by page_flow. On Craigslist that filter
+    returns nothing and the selector is empty, because no page measured
+    carries a next-page link of any kind -- so this exists to NOTICE if that
+    ever changes, not to be relied on.
 
     Reads the DOM's `.href` property rather than the raw attribute, which the
     browser has already resolved — the opposite of Playwright's
@@ -730,12 +714,14 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         html = _content(session) or ""
         state = page_flow.classify(html, url=page.url)
 
-        # "Not painted yet" is not a fault. A SEARCH grid arrives with the
-        # client-side GraphQL response, so at domcontentloaded the page is a
-        # shell with no grid in it — classified naively that is "unknown",
-        # and "unknown" retries. Wait for the anchor and re-classify BEFORE
-        # the retry decision. Mirrors playwright_scraper exactly; see
-        # page_flow.should_wait.
+        # "Not painted yet" is not a fault. A REAL state on this site rather
+        # than a theoretical one: the application removes the served result
+        # list about twenty seconds in and paints its own grid several
+        # seconds later, so there is a window in which the page has neither.
+        # Waiting is the right answer there -- retrying would throw away a
+        # page that is about to be fine. Wait and
+        # re-classify BEFORE the retry decision. Mirrors playwright_scraper
+        # exactly; see page_flow.should_wait.
         if page_flow.should_wait(state):
             wait_timeout = page_flow.content_timeout_ms(args.mode)
             logger.info("Batch %d is a page Craigslist served whose results "
@@ -753,9 +739,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             state = page_flow.classify(html, url=page.url)
 
         # No interstitial-settling step, and its absence is measured rather
-        # than an omission: 22 captures carry no interstitial at all. An
-        # scored gets the HTTP/2 stream reset with no markup at all, so there
-        # is nothing to wait out. See page_flow's "There is no block page".
+        # than an omission: 22 captures covering six categories and five
+        # locales carry no interstitial of any kind, and the word "captcha"
+        # appears zero times on any of them. There is nothing to wait out.
         #
         # The paid path is reached only for state "challenge", which no
         # capture of this site has ever produced. Wired up because a bot
@@ -778,7 +764,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         if not page_flow.should_retry(state):
             # "content" and "empty" are both final answers. An empty page is
-            # a CORRECT one — a hub category has no grid — so retrying it
+            # a CORRECT one — an area landing page has no results — so retrying it
             # would re-confirm the same right answer, and rotating the exit
             # would blame an address for the URL it was given.
             break
@@ -814,11 +800,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             f.write(html or "")
         logger.error(
             "This response was not a Craigslist page -- %d bytes, %s the site's "
-            "own asset host, saved to %s. There is no challenge to solve. "
-            "What clears it, measured 2026-09-10: a residential exit, and the "
-            "country does not matter (an Indonesian and a US residential exit "
-            "returned identical pages) — a datacentre address gets nothing. "
-            "This is exit 3, distinct from a genuinely empty result (exit 4).",
+            "own asset host, saved to %s. The check is structural rather "
+            "than a marker list, which is what answers correctly for an "
+            "interstitial, a block page and Chromium's own network-error "
+            "page alike. No challenge vendor has ever been observed here, so "
+            "a 2Captcha key is unlikely to be the answer; a different exit is "
+            "the thing to try. This is exit 3, distinct from a genuinely "
+            "empty result (exit 4).",
             len(html or ""),
             "which references" if served_by_craigslist(html or "")
             else "with no reference to", debug_html)
@@ -927,10 +915,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                     dump_path, len(html))
 
     # Only for a state page_flow already counts as BLOCKED. An EMPTY
-    # page is a correct answer, and a live run of a /p/<slug> hub
-    # reported exit 3 on a page the site had plainly served because the
-    # hub's own performance script names `akamaihd.net`. Mirrors
-    # playwright_scraper exactly.
+    # page is a correct answer, and in a sibling repo (tokopedia-scraper)
+    # a served hub page reported exit 3 because that site's own
+    # performance script names `akamaihd.net`. Mirrors playwright_scraper
+    # exactly.
     vendor = (detect_bot_challenge(html, url=page.url)
               if page_flow.counts_as_blocked(state) else None)
     if vendor:
@@ -1076,11 +1064,8 @@ def scrape(args) -> int:
     blocked = False
     # Both modes are one row per product, so `sku` is the key for both.
     dedupe_key = "sku"
-    # Only --mode product is single-page. A SHOP FRONT paginates exactly like
-    # a category listing — ?page=N, the same tiles — and treating it as
-    # single-page made `--mode shop --pages 2` fetch one page and report
-    # "complete", which is the silent-success failure this family exists to
-    # avoid. Found on the first live shop run.
+    # Only --mode posting is single-page: one advert is the whole job, while
+    # a listing run walks a list. Mirrors playwright_scraper.
     stop_reason = "single_page_mode" if args.mode == "posting" else "completed"
 
     pool = proxy_pool_from_args(args)
@@ -1182,10 +1167,9 @@ def scrape(args) -> int:
                  if ok_pages else args.url)
 
     # One-per-run context, in the sidecar rather than repeated down a column.
-    # Mirrors the Playwright engine exactly: the seller's own facts in
-    # --mode product, and the scroll trace plus the page's own result header
-    # in --mode listing, because on an infinitely-scrolling site those are
-    # what say how much of the listing the run actually saw.
+    # Mirrors the Playwright engine exactly: the walk trace plus the page's
+    # own result header in --mode listing, because those are what say how
+    # much of the list the run actually saw. --mode posting has none.
     extra = None
     walks = {o.page_num: o.walk for o in outcomes if o.walk}
     headers = {o.page_num: o.header for o in outcomes if o.header}

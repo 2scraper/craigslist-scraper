@@ -8,8 +8,8 @@ the identifier the README already tells people to diff on for price
 monitoring and assortment tracking, but that nothing in this repo actually
 computed.
 
-    python3 diff_runs.py --old girls_clothing.2026-09-01.json \\
-                          --new girls_clothing.2026-09-07.json
+    python3 diff_runs.py --old craigslist_products.2026-09-14.json \\
+                          --new craigslist_products.2026-09-15.json
 
 Typical use is a scheduled re-run of one of the four scraper engines, kept
 under a dated filename, diffed against the previous one:
@@ -46,8 +46,6 @@ from typing import Dict, List, Optional, Tuple
 
 from output_writer import UNIQUE_BY_SKU_MODES
 
-# `sold` is tracked alongside the price, and `sold_is_floor` with it, because
-#
 # WHAT CAN ACTUALLY CHANGE ON THIS SITE, and nothing else.
 #
 # This tuple was inherited tracking `sold` and `sold_is_floor`, which are not
@@ -103,10 +101,11 @@ def _within_tolerance(before: dict, after: dict, changes: dict,
     because the alternative is a comment inventing a reason. A sibling repo
     needs it: that site converts prices for a cross-border visitor and the
     exchange rate ticks between two runs of the same command. NO EQUIVALENT
-    TOKOPEDIA BEHAVIOUR WAS MEASURED — the site quotes IDR to every visitor,
-    verified identical from an Indonesian and a US exit with zero price
-    differences across the 68 products both runs saw, so a run has no
-    conversion in it and every rupiah of a difference is a real price move.
+    CRAIGSLIST BEHAVIOUR WAS MEASURED — the currency follows the AREA, not
+    the exit (eight areas fetched through one US residential exit returned
+    USD, CAD, EUR, JPY and MXN, see the README), and a price is the one the
+    seller typed, so a run has no conversion in it and any difference is a
+    real price move.
 
     So the flag stays available and DEFAULTS TO ZERO, which makes it inert
     unless someone deliberately asks for it. Set it to something non-zero

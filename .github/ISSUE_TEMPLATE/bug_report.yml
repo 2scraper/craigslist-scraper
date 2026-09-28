@@ -10,26 +10,23 @@ body:
         mask credentials in their own logs, but raw HTML dumps and the Scraper
         API's `x-debug` header do not. Replace them with `***`.
 
-        Two things answer most reports faster than we can:
+        A few things answer most reports faster than we can:
 
-        - **Everything exit 3?** Check the exit address first. Etsy's
-          DataDome answers every datacentre and VPN IP with HTTP 403, so a run
-          from a VPS or a CI runner is blocked whatever else is set. If the
-          log says `t=bv`, a captcha key does not help — that challenge is
-          not solvable. The Scraping Browser API (`--cdp-endpoint`) is the
-          path that works; if a profile keeps refusing after three retries,
-          try a different `pid`.
-        - **Zero products?** You may be on a page that has none — a taxonomy
-          hub, or one page past the end of a listing. It answers 200 with
-          nothing on it, which is exit 4 and a correct answer. See
+        - **Exit 3?** That has never been observed on this site: Craigslist
+          served a datacentre address with no proxy and no key during this
+          repo's development. Read the debug dump the run wrote first — if it
+          is Chromium's own error page, the problem is the network or the
+          proxy, not the site. See
           [TROUBLESHOOTING.md](../blob/main/TROUBLESHOOTING.md).
-        - **`rating` empty on every row?** That is expected on a listing run:
-          Etsy publishes no per-listing rating there. The stars you see on a
-          tile are the shop's and are in `shop_rating`. See the README.
-        - **Wrong currency or language?** Etsy decides both from your exit
-          IP, not from the URL — a request for `/fr/…` from a German exit is
-          redirected to `/de/…`. The row's `url` says which storefront
-          actually answered.
+        - **Zero rows?** An area landing page (`/area/newyork`) has no
+          results of its own, so exit 4 there is a correct answer. A result
+          list looks like `/search/area/newyork?cat=sss`.
+        - **`rating`, `brand`, `in_stock` or `original_price` empty on every
+          row?** Expected: Craigslist publishes none of them. See the README.
+        - **`currency` null?** Jobs, services and community publish no
+          structured data, and the printed `$` is ambiguous across the USD,
+          CAD and MXN areas, so the scraper does not guess. The currency
+          follows the AREA in the URL, not your exit IP.
 
   - type: dropdown
     id: engine
@@ -62,9 +59,9 @@ body:
     attributes:
       label: Exit code
       description: >-
-        `echo $?` straight after the run. These mean specific things — 3 is a
-        challenge page, 4 is "ran fine, found nothing", 124 is a self-imposed
-        timeout. The table is in the README.
+        `echo $?` straight after the run. These mean specific things — 3 is
+        "the response was not a Craigslist page", 4 is "ran fine, found
+        nothing", 6 is partial. See TROUBLESHOOTING.md.
       placeholder: "4"
     validations:
       required: true
@@ -77,8 +74,8 @@ body:
       render: shell
       placeholder: |
         python3 playwright_scraper.py \
-          --url "https://www.etsy.com/search?q=handmade+mug" \
-          --pages 3 --out grills
+          --url "https://www.craigslist.org/search/area/newyork?cat=sss" \
+          --pages 3 --out bikes
     validations:
       required: true
 
@@ -98,7 +95,8 @@ body:
     attributes:
       label: What you expected instead
       placeholder: >-
-        96 products, as the README says a category page yields.
+        About 350 rows from one served response, as the README measures for a
+        large area.
     validations:
       required: true
 
