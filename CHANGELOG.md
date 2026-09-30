@@ -10,7 +10,33 @@ notes say so first, because nobody should discover that from their output.
 
 ## [Unreleased]
 
+### Added
+
+- **CSV cells that a spreadsheet would run as a formula are prefixed with an
+  apostrophe.** A cell beginning `=`, `+`, `-`, `@`, tab, CR or LF is executed
+  by Excel, Sheets and LibreOffice, and a listing title is free text written
+  by the seller. Only strings are touched (a `-5` price stays a number), it
+  is applied after a list is joined into one cell, and it is CSV only: the JSON
+  keeps the site's bytes. The count is recorded as `csv_cells_escaped` in the
+  sidecar so the two outputs' divergence is declared rather than discovered;
+  an engine's own `extra` wins a collision. Not measured on live Craigslist
+  data, so it is not claimed to fire today. `scraper_api_client.py` calls
+  `save` without a sidecar and prints the count instead.
+
 ### Fixed
+
+- **Output files are written atomically.** `write_json`, `write_csv` and
+  `write_run_meta` opened their target with a truncating `open`, so a crash,
+  a kill or a full disk halfway through left a SHORTER file where the last
+  good run had been - the previous output destroyed by the attempt to replace
+  it, not by its outcome. The sidecar is the file a consumer branches on, so a
+  truncated `.meta.json` beside good rows read as a broken run over fine data.
+  Each now writes a temporary file in the target's own directory (a rename is
+  only atomic within one filesystem), `fsync`s it, and renames it over the
+  target. The temporary file is created 0600 and a rename keeps that, so the
+  mode is set explicitly: an existing file keeps its own, a new one gets what
+  `open()` would have given it. Checked by planting each fault and requiring
+  the suite to go red on the check that names it.
 
 - **The Scraper API path (`scraper_api_client.py`) failed whenever a wait flag
   was given, and never saw the target's status.** Measured 2026-09-23 against
