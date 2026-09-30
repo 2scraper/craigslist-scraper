@@ -48,6 +48,8 @@ import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
+import dataclasses
+import stat
 from dataclasses import fields
 
 import captcha_solver
@@ -56,7 +58,7 @@ import page_flow
 import product_parser
 import proxy_pool
 from diff_runs import diff_products
-from output_writer import (Product, save, finish_run, write_csv, run_meta,
+from output_writer import (_atomic, write_json, write_run_meta, Product, save, finish_run, write_csv, run_meta,
                            dedupe_by_key, ROW_CLASS_BY_MODE,
                            UNIQUE_BY_SKU_MODES, SOURCE_DEFAULT,
                            EXIT_BLOCKED, EXIT_NO_PRODUCTS, EXIT_PARTIAL,
@@ -1786,6 +1788,138 @@ def test_writers():
     return ok
 
 
+def test_atomic_writes_and_csv_escape():
+    section("Atomic writes, and CSV formula neutralisation")
+    ok = True
+    rows = parse_products(LISTING_NEWYORK, LISTING_URL, page=1)[:3]
+
+    # A write that dies halfway must leave the previous good file exactly as
+    # it was. `set` is not JSON-serialisable, so json.dump has already written
+    # an opening bracket and some rows when it raises.
+    # `images` holds a set, which json.dump cannot encode, so it has already
+    # written an opening bracket and the first fields when it raises. The CSV
+    # half uses `_atomic` directly, since csv cannot be made to fail midway
+    # on a well-formed row.
+    poison = dataclasses.replace(rows[0], images={1, 2})
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "out.json")
+        write_json(rows, path)
+        before = open(path, "rb").read()
+        try:
+            write_json([poison], path)
+        except TypeError:
+            pass
+        ok &= check("out.json survives a write that dies halfway, byte for byte",
+                    open(path, "rb").read() == before)
+        path = os.path.join(d, "out.csv")
+        write_csv(rows, path)
+        before = open(path, "rb").read()
+        try:
+            with _atomic(path, newline="") as f:
+                f.write("half a row,")
+                raise RuntimeError("disk full")
+        except RuntimeError:
+            pass
+        ok &= check("out.csv survives a write that dies halfway, byte for byte",
+                    open(path, "rb").read() == before)
+        meta_prefix = os.path.join(d, "m")
+        with redirect_stdout(io.StringIO()):
+            write_run_meta(meta_prefix, {"status": "complete", "n": 1})
+        before = open(meta_prefix + ".meta.json", "rb").read()
+        try:
+            with redirect_stdout(io.StringIO()):
+                write_run_meta(meta_prefix, {"status": "x", "bad": {1, 2}})
+        except TypeError:
+            pass
+        ok &= check("the sidecar survives a write that dies halfway",
+                    open(meta_prefix + ".meta.json", "rb").read() == before)
+        ok &= check("no temporary file is left behind by a failed write",
+                    not [n for n in os.listdir(d) if n.endswith(".tmp")])
+
+        # NamedTemporaryFile is 0600 and a rename keeps it.
+        umask = os.umask(0)
+        os.umask(umask)
+        fresh = os.path.join(d, "fresh.json")
+        write_json(rows, fresh)
+        ok &= check("a NEW file gets the mode open() would have given it",
+                    stat.S_IMODE(os.stat(fresh).st_mode) == 0o666 & ~umask)
+        os.chmod(fresh, 0o640)
+        write_json(rows, fresh)
+        ok &= check("an EXISTING file keeps its own mode",
+                    stat.S_IMODE(os.stat(fresh).st_mode) == 0o640)
+
+        # CSV neutralisation: strings only, after the list join, CSV only.
+        evil = dataclasses.replace(
+            rows[0], title="=HYPERLINK(\"http://x\")", location="-$50 OBO",
+            price=-5.0, images=["@SUM(1)", "b"], body="\tlead")
+        calm = dataclasses.replace(rows[1], title="Plain title")
+        out = os.path.join(d, "esc")
+        stats = {}
+        with redirect_stdout(io.StringIO()):
+            save([evil, calm], out, fmt="both", stats=stats)
+        with open(out + ".csv", newline="") as fh:
+            read = list(csv.DictReader(fh))
+        ok &= check("a formula-shaped title is prefixed in the CSV",
+                    read[0]["title"].startswith("'="))
+        ok &= check("a leading minus in a string is prefixed too",
+                    read[0]["location"] == "'-$50 OBO")
+        ok &= check("a list joined into one cell is escaped AFTER the join",
+                    read[0]["images"] == "'@SUM(1) | b")
+        ok &= check("a leading tab is escaped",
+                    read[0]["body"] == "'\tlead")
+        ok &= check("a NUMBER is not turned into text",
+                    read[0]["price"] == "-5.0")
+        ok &= check("a plain string is untouched",
+                    read[1]["title"] == "Plain title")
+        ok &= check("the JSON keeps the site's bytes exactly",
+                    json.load(open(out + ".json"))[0]["title"]
+                    == "=HYPERLINK(\"http://x\")")
+        ok &= check("the count is reported through stats: 4 cells",
+                    stats.get("csv_cells_escaped") == 4)
+        ok &= check("newline='' survived the move: no doubled CR",
+                    b"\r\r" not in open(out + ".csv", "rb").read())
+
+        with redirect_stdout(io.StringIO()):
+            finish_run([evil], os.path.join(d, "fr"), "both", False,
+                       blocked=False, stop_reason="completed",
+                       pages_requested=1, pages_completed=1,
+                       start_url=LISTING_URL, final_url=LISTING_URL)
+            finish_run([evil], os.path.join(d, "fx"), "both", False,
+                       blocked=False, stop_reason="completed",
+                       pages_requested=1, pages_completed=1,
+                       start_url=LISTING_URL, final_url=LISTING_URL,
+                       extra={"csv_cells_escaped": "caller"})
+        ok &= check("the sidecar declares the divergence",
+                    json.load(open(os.path.join(d, "fr.meta.json")))
+                    .get("csv_cells_escaped") == 4)
+        ok &= check("the caller's own extra wins a collision",
+                    json.load(open(os.path.join(d, "fx.meta.json")))
+                    .get("csv_cells_escaped") == "caller")
+        with redirect_stdout(io.StringIO()):
+            finish_run([evil], os.path.join(d, "fj"), "json", False,
+                       blocked=False, stop_reason="completed",
+                       pages_requested=1, pages_completed=1,
+                       start_url=LISTING_URL, final_url=LISTING_URL)
+        ok &= check("a JSON-only run does not claim an escape count",
+                    "csv_cells_escaped" not in json.load(
+                        open(os.path.join(d, "fj.meta.json"))))
+
+    # Static half: nothing in the writer module may truncate-open a file.
+    tree = ast.parse(inspect.getsource(sys.modules["output_writer"]))
+    truncating = [n.lineno for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "open"
+                  and any(isinstance(a, ast.Constant) and isinstance(a.value, str)
+                          and a.value.startswith("w") for a in n.args[1:2])]
+    ok &= check("output_writer opens nothing for truncating write (lines: %s)"
+                % (truncating or "none"), not truncating)
+    # On Linux a csv written with newline=None is byte-identical, so the
+    # Windows-only doubled CR cannot be observed here; pin the argument itself.
+    src = inspect.getsource(write_csv)
+    ok &= check("write_csv hands newline='' through to _atomic",
+                re.search(r'_atomic\(path,\s*newline=""\)', src) is not None)
+    return ok
+
+
 def test_finish_run():
     section("finish_run: status and exit codes")
     ok = True
@@ -2880,6 +3014,7 @@ def main():
     ok &= test_page_flow_policy()
     ok &= test_output_contract()
     ok &= test_writers()
+    ok &= test_atomic_writes_and_csv_escape()
     ok &= test_finish_run()
     ok &= test_diff()
     ok &= test_engine_flag_parity()
