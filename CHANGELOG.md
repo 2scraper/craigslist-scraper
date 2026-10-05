@@ -55,6 +55,18 @@ notes say so first, because nobody should discover that from their output.
   empty body under HTTP 403/429/503 stays blocked, and Chromium's own
   network-error page (which has text) is still classed as blocked.
 
+- **pyppeteer could not use an authenticated proxy on current Chromium.**
+  `page.authenticate()` needs `Network.setRequestInterception`, which current
+  Chromium no longer has. Measured 2026-10-05 with `--chromium-path` at
+  Chromium 153: exit 1 and a traceback (`'Network.setRequestInterception'
+  wasn't found`) before the first navigation, with a working proxy and with a
+  wrong password alike. It still works on the Chromium pyppeteer bundles
+  (r1181205), so it is tried first and only that one error falls back to CDP's
+  Fetch domain (`handleAuthRequests`, as Playwright does). The fallback is
+  slower because every request is paused and continued, and it answers only a
+  challenge whose source is the proxy. After the change on Chromium 153 a
+  working proxy returns 327 rows (exit 0) and a wrong password ends as exit 5.
+
 - **The Scraper API path (`scraper_api_client.py`) failed whenever a wait flag
   was given, and never saw the target's status.** Measured 2026-09-23 against
   the live `/tasks/sync` endpoint: `waitFor` sent as a JSON-encoded string

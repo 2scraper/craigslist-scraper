@@ -2797,6 +2797,8 @@ def test_engines(skips):
                     list(sig.parameters) == ["args"])
         if module_name == "playwright_scraper":
             ok &= _check_readiness_poll_survives_navigation(module)
+        if module_name == "puppeteer_scraper":
+            ok &= _check_proxy_auth_falls_back(module)
     return ok
 
 
@@ -2866,6 +2868,112 @@ def _check_readiness_poll_survives_navigation(module):
                 not in src)
     ok &= check("all three readiness polls use _count_matches",
                 src.count("lambda sel: _count_matches(session.page, sel)") == 3)
+    return ok
+
+
+def _check_proxy_auth_falls_back(module):
+    """page.authenticate needs Network.setRequestInterception, which current
+    Chromium no longer has. Measured 2026-10-05: with --chromium-path at
+    Chromium 153 the engine died with exit 1 and a traceback before its first
+    navigation; with the fallback, a working proxy returned rows and a wrong
+    password ended as exit 5."""
+    import asyncio
+    ok = True
+
+    class FakeSession:
+        def __init__(self):
+            self.sent, self.handlers = [], {}
+
+        def on(self, name, fn):
+            self.handlers[name] = fn
+
+        async def send(self, method, params=None):
+            self.sent.append((method, params or {}))
+
+    def make(authenticate_error):
+        sess = FakeSession()
+
+        class Target:
+            async def createCDPSession(self_inner):
+                return sess
+
+        class Page:
+            target = Target()
+            calls = 0
+
+            async def authenticate(self_inner, creds):
+                Page.calls += 1
+                if authenticate_error is not None:
+                    raise authenticate_error
+
+        class Bridge:
+            def run(self_inner, coro, timeout=None):
+                return asyncio.new_event_loop().run_until_complete(coro)
+
+        obj = object.__new__(module._Session)
+        obj.page, obj.bridge = Page(), Bridge()
+        return obj, Page, sess
+
+    def attempt(fn):
+        try:
+            fn()
+            return None
+        except Exception as exc:
+            return exc
+
+    # Fast path: authenticate works, so nothing is paused.
+    obj, Page, sess = make(None)
+    err = attempt(lambda: obj._install_proxy_auth("u", "p"))
+    ok &= check("a Chromium with page.authenticate uses it and nothing else",
+                err is None and Page.calls == 1 and not sess.sent)
+
+    # Current Chromium: the one error falls back to Fetch.
+    missing = Exception("Protocol error (Network.setRequestInterception): "
+                        "'Network.setRequestInterception' wasn't found")
+    obj, Page, sess = make(missing)
+    err = attempt(lambda: obj._install_proxy_auth("u", "p"))
+    ok &= check("setRequestInterception missing falls back instead of raising",
+                err is None)
+    enable = [p for m, p in sess.sent if m == "Fetch.enable"]
+    ok &= check("and enables Fetch with handleAuthRequests",
+                len(enable) == 1 and enable[0].get("handleAuthRequests") is True)
+
+    # The handlers answer ONLY a proxy challenge.
+    async def drive():
+        # A missing handler must fail the named checks below, not crash the
+        # suite: a crash proves the fault was reachable and nothing about the
+        # guard.
+        def fire(name, event):
+            handler = sess.handlers.get(name)
+            if handler is not None:
+                handler(event)
+        fire("Fetch.authRequired",
+             {"requestId": "r1", "authChallenge": {"source": "Proxy"}})
+        fire("Fetch.authRequired",
+             {"requestId": "r2", "authChallenge": {"source": "Server"}})
+        fire("Fetch.requestPaused", {"requestId": "r3"})
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    asyncio.new_event_loop().run_until_complete(drive())
+    auth = {p["requestId"]: p["authChallengeResponse"]
+            for m, p in sess.sent if m == "Fetch.continueWithAuth"}
+    ok &= check("a PROXY challenge is answered with the credentials",
+                auth.get("r1") == {"response": "ProvideCredentials",
+                                   "username": "u", "password": "p"})
+    ok &= check("a SERVER challenge is not answered with them",
+                auth.get("r2") == {"response": "Default"})
+    ok &= check("every other request is continued unchanged",
+                ("Fetch.continueRequest", {"requestId": "r3"}) in sess.sent)
+
+    # Any other error is a real failure and must not be swallowed.
+    obj, Page, sess = make(Exception("Target closed"))
+    err = attempt(lambda: obj._install_proxy_auth("u", "p"))
+    ok &= check("any other authenticate error still propagates",
+                err is not None and "Target closed" in str(err) and not sess.sent)
+
+    src = inspect.getsource(module)
+    ok &= check("the session installs auth through _install_proxy_auth only",
+                src.count("self.page.authenticate(") == 1)
     return ok
 
 
