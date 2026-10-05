@@ -45,6 +45,14 @@ interstitial, a block page, and **Chromium's own network-error page** — that
 last one carries `<title>www.craigslist.org</title>`, so anything reading the
 title would call it a real page.
 
+An **empty** response is not exit 3. A document with no text and no element
+in it (0 bytes, or the 39-byte `<html><head></head><body></body></html>` a
+browser holds after a navigation that failed) is a page that was never
+obtained, so it ends as **exit 5**: look at the proxy first (down, or
+rejecting its credentials), then at the route to the site. Measured
+2026-10-01: a wrong proxy password gives 0 bytes on pyppeteer, and Selenium
+with a proxy it cannot send credentials to gives the 39-byte document.
+
 What to try, in order:
 
 1. Read the debug dump the run wrote. If it is a Chromium error page, the

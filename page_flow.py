@@ -360,6 +360,12 @@ STATE_POLICY = {
     # Not built out of the site's own assets, or a refusing status. A
     # different exit is the response; there is nothing to solve.
     "blocked":   {"retry": True,  "solve": False, "blocked": True,  "parse": False},
+    # Nothing came back: an empty document after a navigation that failed.
+    # Retried (a different exit is exactly what a dead proxy wants) but NOT
+    # blocked, so a run that never gets a page ends as exit 5, "the content
+    # was never obtained", rather than exit 3 sending the reader to look for
+    # a refusal nobody has seen.
+    "unreached": {"retry": True,  "solve": False, "blocked": False, "parse": False},
     # Never observed on this site -- zero challenge markers and zero
     # occurrences of the word "captcha" across 22 captures. If a bot manager
     # is ever switched on, this is the state that would pay for it, and
