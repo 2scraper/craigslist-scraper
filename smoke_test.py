@@ -2739,6 +2739,77 @@ def test_engines(skips):
         sig = inspect.signature(module.scrape)
         ok &= check("%s.scrape takes exactly the parsed args" % module_name,
                     list(sig.parameters) == ["args"])
+        if module_name == "playwright_scraper":
+            ok &= _check_readiness_poll_survives_navigation(module)
+    return ok
+
+
+def _check_readiness_poll_survives_navigation(module):
+    """The readiness polls ran into a page swapping its document.
+
+    Measured live 2026-10-01: 2 of 7 three-page runs through one US exit died
+    with exit 1, `Page.query_selector_all: Execution context was destroyed,
+    most likely because of a navigation`, after page 1 had been served. The
+    fake page raises exactly that, then answers.
+    """
+    ok = True
+
+    class FakePage:
+        def __init__(self, script):
+            self.script = list(script)
+            self.calls = 0
+
+        def query_selector_all(self, selector):
+            self.calls += 1
+            step = self.script.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return [object()] * step
+
+    def attempt(fn):
+        # A broken guard must fail a NAMED check, not crash the suite: a crash
+        # proves the fault was reachable and says nothing about the guard.
+        try:
+            return fn()
+        except Exception as exc:
+            return exc
+
+    gone = module.PWError("Page.query_selector_all: Execution context was "
+                          "destroyed, most likely because of a navigation")
+    page = FakePage([gone, gone, 7])
+    ok &= check("a count taken mid-navigation reads as none yet",
+                attempt(lambda: module._count_matches(FakePage([gone]), "a.x")) == 0)
+    ok &= check("and the next poll returns the real count",
+                [attempt(lambda: module._count_matches(page, "a.x"))
+                 for _ in range(3)] == [0, 0, 7])
+
+    # Through the shared poll, which is what the engine actually runs.
+    page = FakePage([gone, gone, 0, 9])
+    waited = []
+    found = attempt(lambda: page_flow.wait_for_count(
+        lambda sel: module._count_matches(page, sel), waited.append,
+        "a.x", 5, 10_000))
+    ok &= check("wait_for_count rides out two swaps and reaches the grid",
+                found == 9 and len(waited) == 3)
+
+    # Only that error is swallowed.
+    other = module.PWError("Page.query_selector_all: Target page, context or "
+                           "browser has been closed")
+    try:
+        module._count_matches(FakePage([other]), "a.x")
+        raised = False
+    except module.PWError:
+        raised = True
+    ok &= check("any other driver error still propagates", raised)
+
+    # The engine must route all three readiness waits through it: a raw
+    # query_selector_all inside a wait_for_count lambda is the fault.
+    src = inspect.getsource(module)
+    ok &= check("no readiness poll calls query_selector_all directly",
+                "lambda sel: len(session.page.query_selector_all(sel))"
+                not in src)
+    ok &= check("all three readiness polls use _count_matches",
+                src.count("lambda sel: _count_matches(session.page, sel)") == 3)
     return ok
 
 

@@ -560,6 +560,35 @@ def _mask_credentials(text: str) -> str:
     return _CREDENTIALS_IN_URL_RE.sub(r"\1***:***@", text or "")
 
 
+def _count_matches(page, selector: str) -> int:
+    """`len(page.query_selector_all(selector))`, tolerating a navigation.
+
+    The readiness waits poll this, and the page really does navigate under
+    them: the application removes the served list and paints its own grid
+    (measured around t=22s), and a poll that lands on the swap raises
+    `Page.query_selector_all: Execution context was destroyed, most likely
+    because of a navigation`. Uncaught, that took a run down with exit 1
+    AFTER page 1 had been served, so the rows already gathered were lost --
+    2 of 7 three-page runs through one US exit, 2026-10-01.
+
+    A count taken mid-swap says nothing about whether the grid has painted, so
+    it reads as "none yet" and the poll tries again. Only that one error is
+    swallowed: anything else (a closed page, a dead browser) is a real
+    failure and propagates. `_content_when_settled` is the same tolerance for
+    the snapshot half of the same race.
+    """
+    try:
+        return len(page.query_selector_all(selector))
+    except PWError as e:
+        text = str(e).lower()
+        if "execution context was destroyed" in text or "navigating" in text:
+            logger.info("The page navigated under the readiness poll (the "
+                        "application taking over?) -- counting that poll as "
+                        "none yet and polling again.")
+            return 0
+        raise
+
+
 def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
     """page.content() that tolerates a page mid-navigation.
 
@@ -790,7 +819,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                         "neither. Waiting up to %.0fs rather than spending a "
                         "retry on it.", page_num, len(html), wait_timeout / 1000)
             found = page_flow.wait_for_count(
-                lambda sel: len(session.page.query_selector_all(sel)),
+                lambda sel: _count_matches(session.page, sel),
                 session.page.wait_for_timeout,
                 _ready_selector(args), _min_matches(args), wait_timeout)
             if found < _min_matches(args):
@@ -923,7 +952,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # a sibling repo took a whole run down with exit 1 that way, on its
         # site's most obvious URL. See page_flow.wait_for_count.
         found = page_flow.wait_for_count(
-            lambda sel: len(session.page.query_selector_all(sel)),
+            lambda sel: _count_matches(session.page, sel),
             session.page.wait_for_timeout, selector, threshold, content_timeout)
         if found < threshold:
             if args.mode == "posting":
@@ -956,7 +985,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             # served list and not yet painted its grid, so waiting on the grid
             # specifically is what gets past it.
             page_flow.wait_for_count(
-                lambda sel: len(session.page.query_selector_all(sel)),
+                lambda sel: _count_matches(session.page, sel),
                 session.page.wait_for_timeout, SELECTORS["rendered_card"],
                 page_flow.MIN_CARD_MATCHES, page_flow.CONTENT_TIMEOUT_MS_HYDRATED)
 
