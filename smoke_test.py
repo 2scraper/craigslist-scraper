@@ -63,7 +63,7 @@ from output_writer import (_atomic, write_json, write_run_meta, Product, save, f
                            UNIQUE_BY_SKU_MODES, SOURCE_DEFAULT,
                            EXIT_BLOCKED, EXIT_NO_PRODUCTS, EXIT_PARTIAL,
                            EXIT_API_ERROR)
-from product_parser import (parse_products, parse_posting, parse_rendered_cards,
+from product_parser import (is_empty_document, parse_products, parse_posting, parse_rendered_cards,
                             page_currency, page_url, paginates_by_url,
                             pagination_refusal, category_from_url,
                             category_code, listing_kind, site_host,
@@ -1513,6 +1513,62 @@ def test_chromium_error_page():
     ok &= check("a real page WAS", served_by_craigslist(LISTING_NEWYORK))
     ok &= check("so it is reported as blocked, not as content",
                 detect_page_state(CHROMIUM_ERROR, None, LISTING_URL) == "blocked")
+    return ok
+
+
+def test_empty_document_is_not_blocked():
+    section("Page state: an empty document is 'never obtained', not 'blocked'")
+    ok = True
+    # The 39-byte document a browser holds after a navigation that failed.
+    # Measured 2026-10-01: Selenium through a proxy it cannot send credentials
+    # to, and a third-party audit's "39 bytes". pyppeteer with a wrong proxy
+    # password returns 0 bytes. Both used to be exit 3 -- a refusal -- while
+    # Playwright's own failed navigation was exit 5.
+    empty = "<html><head></head><body></body></html>"
+    ok &= check("the failed-navigation document is 39 bytes", len(empty) == 39)
+    for label, html in (("0 bytes", ""), ("whitespace only", " \n "),
+                        ("the 39-byte document", empty),
+                        ("a bare <html>", "<html></html>")):
+        ok &= check("%s is an empty document" % label,
+                    is_empty_document(html))
+        ok &= check("%s is 'unreached' with no status" % label,
+                    detect_page_state(html, None, LISTING_URL) == "unreached")
+    ok &= check("and with a 200", detect_page_state(empty, 200, LISTING_URL)
+                == "unreached")
+
+    # What must NOT be reached: a refusing status is judged first, and
+    # anything carrying text or an element is not an absence of response.
+    for status in (403, 429, 503):
+        ok &= check("an empty body under HTTP %d stays blocked" % status,
+                    detect_page_state(empty, status, LISTING_URL) == "blocked")
+    for label, html in (
+            ("a title", "<html><head><title>x</title></head><body></body></html>"),
+            ("body text", "<html><head></head><body>Reference #18.5</body></html>"),
+            ("an element", "<html><head></head><body><div></div></body></html>"),
+            ("a script", "<html><head><script></script></head><body></body></html>")):
+        ok &= check("a document with %s is not empty" % label,
+                    not is_empty_document(html))
+    ok &= check("Chromium's own error page is still blocked (pinned: it has "
+                "content, and the asset heuristic is the only answer to it)",
+                detect_page_state(CHROMIUM_ERROR, None, LISTING_URL) == "blocked")
+    ok &= check("a real listing is untouched",
+                detect_page_state(LISTING_NEWYORK, 200, LISTING_URL) == "content")
+
+    # The policy: retried, but NOT blocked, so the run ends as exit 5.
+    ok &= check("unreached is retried", page_flow.should_retry("unreached"))
+    ok &= check("unreached is not solved", not page_flow.should_solve("unreached"))
+    ok &= check("unreached is not counted as blocked",
+                not page_flow.counts_as_blocked("unreached"))
+    ok &= check("unreached is not parsed", not page_flow.should_parse("unreached"))
+
+    # Every engine must turn it into a load failure. A missing branch would
+    # fall through to the parse below it and report an empty listing.
+    for name in ENGINES:
+        src = open(os.path.join(REPO_ROOT, name), encoding="utf-8").read()
+        ok &= check("%s turns 'unreached' into a load failure" % name,
+                    re.search(r'if state == "unreached":(?:(?!\n    if state ).)*'
+                              r'outcome\.load_failed = True', src, re.S)
+                    is not None)
     return ok
 
 
@@ -3079,6 +3135,7 @@ def main():
     ok &= test_posting_variants()
     ok &= test_page_state()
     ok &= test_chromium_error_page()
+    ok &= test_empty_document_is_not_blocked()
     ok &= test_markers_match_no_good_page()
     ok &= test_rendered_grid()
     ok &= test_walk_machinery()

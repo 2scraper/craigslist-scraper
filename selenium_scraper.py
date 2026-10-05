@@ -713,6 +713,22 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         outcome.final_url = d["current_url"]()
         return outcome
 
+    if state == "unreached":
+        # Nothing came back: an empty document, which is what a browser holds
+        # after a navigation that FAILED (a dead or unauthenticated proxy, no
+        # route). It is not a refusal -- this site has never been seen to
+        # refuse a request -- so it is not exit 3, which would send the reader
+        # looking for one. The retries above already spent the block budget.
+        logger.error(
+            "Nothing came back for page %d -- %d byte(s), an empty document. "
+            "That is a navigation that failed (a proxy that is down or "
+            "rejecting its credentials, or no route to the site), not a "
+            "refusal: exit 5, the content was never obtained.",
+            page_num, len(html or ""))
+        outcome.load_failed = True
+        outcome.final_url = d["current_url"]()
+        return outcome
+
 
     walked_rows = []
     walked_seen = set()

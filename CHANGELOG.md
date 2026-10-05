@@ -38,6 +38,23 @@ notes say so first, because nobody should discover that from their output.
   `open()` would have given it. Checked by planting each fault and requiring
   the suite to go red on the check that names it.
 
+- **An empty response is exit 5 on every engine, not exit 3.** A document
+  with no text and no element (0 bytes, or the 39-byte
+  `<html><head></head><body></body></html>` a browser holds after a
+  navigation that failed) used to be classed as "blocked" by pyppeteer and
+  Selenium, while Playwright reported the same failed navigation as exit 5.
+  Measured 2026-10-01 against the live site: a wrong proxy password gave
+  exit 3 on pyppeteer (0 bytes, 0.4 s) and Playwright exit 5 after 60 s;
+  Selenium through a proxy it cannot send credentials to gave exit 3 on 39
+  bytes. A refusal sends the reader looking for a block this site has never
+  been seen to issue; the real fault was the proxy. The new `unreached`
+  state is retried (a different exit is what a dead proxy wants), is not
+  counted as blocked, and ends as `page_load_timeout`, exit 5. After the
+  change all three agree: pyppeteer 0 bytes and Selenium 39 bytes both exit
+  5, and a working proxy still returns rows. **Unchanged on purpose:** an
+  empty body under HTTP 403/429/503 stays blocked, and Chromium's own
+  network-error page (which has text) is still classed as blocked.
+
 - **The Scraper API path (`scraper_api_client.py`) failed whenever a wait flag
   was given, and never saw the target's status.** Measured 2026-09-23 against
   the live `/tasks/sync` endpoint: `waitFor` sent as a JSON-encoded string

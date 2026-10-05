@@ -431,8 +431,33 @@ def is_no_results(html: str) -> bool:
     return len(container.select(SELECTORS["static_result"])) == 0
 
 
+def is_empty_document(html: Optional[str]) -> bool:
+    """True if nothing came back: no text and no element anywhere.
+
+    `""` and `<html><head></head><body></body></html>` (39 bytes) are the
+    two spellings. The second is what a browser reports after a navigation
+    that FAILED -- a dead or unauthenticated proxy, no route -- and is how
+    a third-party audit's "39 bytes, blocked" arrived: measured 2026-10-01,
+    Selenium through a proxy it cannot send credentials to returns exactly
+    this, and pyppeteer with a wrong proxy password returns 0 bytes.
+
+    An interstitial or a refusal page has at least a title or some text, so
+    this is deliberately stricter than "short". Never observed on this site
+    as a REFUSAL (no run has ever seen Craigslist refuse a request), which
+    is the assumption this rests on; a refusing STATUS is judged first.
+    """
+    if not (html or "").strip():
+        return True
+    soup = BeautifulSoup(html, "html.parser")
+    if soup.get_text(strip=True):
+        return False
+    body = soup.find("body")
+    head = soup.find("head")
+    return not (body and body.find(True)) and not (head and head.find(True))
+
+
 def detect_page_state(html: str, status: Optional[int], url: str = "") -> str:
-    """One of: content · empty · blocked · unpainted.
+    """One of: content · empty · blocked · unpainted · unreached.
 
     Ordered by how much each signal PROVES, not by how cheap it is. A sibling
     repo put a threshold heuristic ahead of an unambiguous positive signal and
@@ -497,6 +522,10 @@ def detect_page_state(html: str, status: Optional[int], url: str = "") -> str:
         return "blocked"
     if status is not None and status in (403, 429, 503):
         return "blocked"
+    # After the refusing statuses, before the asset heuristic: an empty
+    # document is not an interstitial, it is the absence of a response.
+    if is_empty_document(html):
+        return "unreached"
     if not served_by_craigslist(html):
         # Not built out of the site's assets and carrying no container: an
         # interstitial, a block page, or Chromium's own error page.
