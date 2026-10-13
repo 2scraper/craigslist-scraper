@@ -1144,7 +1144,7 @@ def parse_args():
                         "so there is nothing to hand a worker -- in any "
                         "engine. Use the site's own filters to make several "
                         "narrower URLs and run each separately.")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3). "
                         "A page that comes back EMPTY is not retried: a query "
                         "matching nothing is a correct answer, not a fault.")
