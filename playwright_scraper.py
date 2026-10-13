@@ -1498,7 +1498,7 @@ def parse_args():
                         "?page= and ?s= return the same document. To spread a "
                         "run, use the site's own filters to make several "
                         "narrower URLs and run each of them separately.")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3). "
                         "The pause between attempts doubles each time. A page "
                         "that comes back EMPTY is not retried -- see "

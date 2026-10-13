@@ -10,6 +10,13 @@ notes say so first, because nobody should discover that from their output.
 
 ## [Unreleased]
 
+> **Behaviour change:** `--retries 0` is now a usage error (exit 2). It used
+> to be accepted and made the page-load loop unreachable, so nothing was
+> fetched and the engine reported the browser's own blank page as a result:
+> exit 3 or 4 with a 39-byte "capture", in tens of milliseconds. If a
+> script of yours passes 0, pass **1**: the flag counts ATTEMPTS, so 1 means
+> "try once and do not retry".
+
 ### Added
 
 - **CSV cells that a spreadsheet would run as a formula are prefixed with an
@@ -24,6 +31,14 @@ notes say so first, because nobody should discover that from their output.
   `save` without a sidecar and prints the count instead.
 
 ### Fixed
+
+- **`--retries 0` fetched nothing and called it a result.** The load loop is
+  `range(1, retries + 1)`, so 0 never runs it and the engine judged
+  `about:blank`. Three third-party audits of this family ran exactly that and
+  reported a working scraper as broken. `--retries` now goes through
+  `page_flow.attempts` in every entry point; a check reads the source of each
+  one and calls the validator, so a new engine declaring the flag with a
+  plain int fails the suite.
 
 - **Output files are written atomically.** `write_json`, `write_csv` and
   `write_run_meta` opened their target with a truncating `open`, so a crash,
