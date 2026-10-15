@@ -77,6 +77,12 @@ notes say so first, because nobody should discover that from their output.
 - **`.gitignore`** covers `--dump-html` page dumps of any name
   (`*.page2`), a raw `.html` at the top of the tree, and scratch directories
   by kind (`live/`, `out/`, `results/`, `tmp/`, ...).
+- **Canary:** the one-batch served-list run now fails the job when it does
+  not exit 0 (it used to warn and pass, so the served list and its JSON-LD
+  alignment could go untested on a green badge). Every row must carry
+  `sku`, `url` and `title`. The price-share floor of the walking run is 60%
+  rather than 90%: 90% went red on 4 of 32 scheduled runs (79-90%) because of
+  the day's unpriced adverts, with a working parser.
 - Shipped files no longer cite private working documents or their numbered
   sections, and a suite check keeps it that way.
 
