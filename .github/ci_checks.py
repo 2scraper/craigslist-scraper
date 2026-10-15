@@ -101,7 +101,32 @@ HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest",
                  "checksum")
 
-SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
+SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example",
+                    # Captured pages, run output and fixtures: where a key
+                    # pasted into a payload, or a front-end key in a capture,
+                    # actually arrives.
+                    ".json", ".csv", ".html")
+
+# Directory names skipped wherever they sit INSIDE the repository. Matched
+# against the path relative to the repo root, never the absolute path: an
+# absolute path carries every ancestor, so a clone made under `~/venv/` or
+# `/tmp/.venv/` matched the set on every file, scanned nothing, and printed
+# "nothing credential-shaped".
+SKIPPED_DIRS = {".git", "__pycache__", ".venv", "venv"}
+
+
+def _is_env_backup(path):
+    """`.env.bak`, `.env.local`, `.env.save`, ...: a copy of the real `.env`.
+
+    `.env` itself is where a key belongs, is ignored by git, and is not read
+    here, or every developer with a working setup would fail this check.
+    Its COPIES are the case that matters: they are made by hand, named
+    however someone felt like naming them, and one of them, untracked, once
+    held a live key in a sibling repository. `.env.example` is read through
+    its suffix like any other shipped file.
+    """
+    name = path.name
+    return name.startswith(".env.") and name != ".env.example"
 
 
 # A directory holding `pyvenv.cfg` is a virtualenv, whatever it is called.
@@ -112,7 +137,7 @@ SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
 # into pip's vendored code and flags a 32-hex string in `_elffile.py` as
 # key-shaped. Correct about the string, wrong about the file — and it is the
 # FIRST thing a new user sees from `python3 smoke_test.py`. A guard people
-# have to argue with is one they learn to suppress (CLAUDE.md §22).
+# have to argue with is one they learn to suppress.
 #
 # Deliberately NOT a narrowing of what gets scanned: an untracked file is
 # still read, because a key pasted into a scratch file beside the scripts is
@@ -141,10 +166,12 @@ def _is_in_virtualenv(path):
 
 def scanned_files():
     for path in sorted(REPO.rglob("*")):
-        if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
+        if not path.is_file():
             continue
-        if any(part in {".git", "__pycache__", ".venv", "venv"}
-               for part in path.parts):
+        if path.suffix not in SCANNED_SUFFIXES and not _is_env_backup(path):
+            continue
+        if any(part in SKIPPED_DIRS
+               for part in path.relative_to(REPO).parent.parts):
             continue
         if _is_in_virtualenv(path):
             continue
@@ -236,6 +263,11 @@ def secret_check():
                 failed.append(f"{rel}:{lineno} contains {match[:6]}… — a "
                               f"32-char hex string, the shape of a 2captcha key")
 
+    if scanned == 0:
+        # A scan that read nothing has proved nothing, and "nothing
+        # credential-shaped" is then a false statement rather than a pass.
+        failed.append(f"0 files scanned under {REPO} -- the exclusions "
+                      f"matched everything, so nothing was checked")
     if not failed:
         print(f"ok       {scanned} files scanned, nothing credential-shaped")
     return failed

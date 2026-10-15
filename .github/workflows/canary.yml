@@ -89,7 +89,8 @@ jobs:
                echo "::error::this was written. The site was reachable, so this IS a"
                echo "::error::parser regression."
                exit 1 ;;
-            5) echo "::warning::Remote API error (exit 5). Nothing was tested."
+            5) echo "::warning::The content was never obtained (exit 5): a navigation that"
+               echo "::warning::timed out or came back empty. Nothing was tested."
                exit 1 ;;
             6) echo "::error::Partial run (exit 6) — see the sidecar's stop_reason."
                exit 1 ;;
@@ -126,12 +127,23 @@ jobs:
               fail.append("the walk opened %d gap(s): it outran its own harvest, "
                           "so rows went by unread" % walk["gaps"])
 
+          # Every row must carry what identifies it. These come from the
+          # parser, not from what was posted today, so anything short of 100%
+          # is a parser fault.
+          for col in ("sku", "url", "title"):
+              missing = sum(1 for r in rows if not r.get(col))
+              if missing:
+                  fail.append("%d of %d rows have no %s" % (missing, len(rows), col))
+
           priced = sum(1 for r in rows if r["price"] is not None)
           share = 100.0 * priced / len(rows) if rows else 0
-          # 95%-100% across 14 captures; 90 is below every measured value.
-          if share < 90:
-              fail.append("only %.0f%% of rows carry a price (floor 90%%, measured "
-                          "95-100%%)" % share)
+          # A floor on the PARSER, not on the day's posting mix. Free items and
+          # "make offer" adverts genuinely carry no price, and a 90% floor went
+          # red on 4 of 32 scheduled runs (79-90%) with a working parser. A
+          # broken price read takes this near 0, so 60% still catches it.
+          if share < 60:
+              fail.append("only %.0f%% of rows carry a price (floor 60%%; 79-100%% "
+                          "on scheduled runs, 2026-09-14 to 2026-10-14)" % share)
 
           # The served batch is where structured data lives at all. Measured
           # 66%-99% where the category publishes any; this URL measured 89%.
@@ -196,9 +208,12 @@ jobs:
         run: |
           code="${{ steps.served.outputs.exit_code }}"
           if [ "$code" != "0" ]; then
-            echo "::warning::The one-batch run exited $code, so the served-list"
-            echo "::warning::path was not checked. The walking run above stands."
-            exit 0
+            # Red, not a warning: the served list and its JSON-LD alignment
+            # are checked ONLY here, so a run that did not produce them has
+            # tested nothing this step exists for.
+            echo "::error::The one-batch run exited $code, so the served list was"
+            echo "::error::not checked (3 blocked, 4 zero rows, 5 never obtained)."
+            exit 1
           fi
           python - <<'PY'
           import json, sys
@@ -206,11 +221,14 @@ jobs:
           rows = json.load(open("canary_served.json"))
           fail = []
 
-          # Measured 2026-09-14: 353 rows for this URL from one served
-          # response, and 294-358 across the large-area captures.
-          if len(rows) < 250:
-              fail.append("only %d rows from one served response; 353 measured, "
-                          "294-358 across captures" % len(rows))
+          # How many results ONE served response holds varies with the hour:
+          # 353 on 2026-09-14, 294-358 across captures, and 243 at 06:49 UTC
+          # on 2026-10-15, when a floor of 250 went red with every row parsed
+          # (237 of 239 structured). The floor is there to catch a parser that
+          # reads a handful of rows or none, not the day's volume.
+          if len(rows) < 150:
+              fail.append("only %d rows from one served response; 243-358 "
+                          "measured" % len(rows))
 
           enriched = sum(1 for r in rows if r["price_source"] == "jsonld")
           share = 100.0 * enriched / len(rows) if rows else 0

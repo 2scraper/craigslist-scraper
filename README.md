@@ -103,8 +103,9 @@ Read these before concluding something is broken.
 **There are no pages.** `?page=2` and `?s=296` return a **byte-identical**
 response — same length, same first result. Not an empty set, not an error:
 the same page. `--pages` therefore walks the site's own rendered list instead
-of fetching more URLs, and `--concurrency` above 1 is refused, because a
-worker is only useful if it can be handed an address of its own.
+of fetching more URLs, and `--concurrency` above 1 falls back to 1 with a
+warning, because a worker is only useful if it can be handed an address of
+its own.
 
 **One URL tops out at exactly 10,000 results.** Walked to exhaustion, the list
 yields 10,000 distinct ids and then the counter stops. To go further, narrow
@@ -206,6 +207,7 @@ whether a run crashes or spends money. Differences that are real and measured:
 | authenticated `--cdp-endpoint` | yes | **no** — `debuggerAddress` has nowhere for a password | yes |
 | authenticated `--proxy` | yes | **no** — credentials are stripped, with a warning | yes |
 | JavaScript off over a remote profile | no | no | **yes** — per page |
+| `--locale` | yes | no | no |
 | status | primary | secondary | secondary; upstream is unmaintained |
 
 That third row matters more than it looks. Over `--cdp-endpoint`, Playwright
@@ -287,19 +289,21 @@ python playwright_scraper.py --url "https://www.craigslist.org/search/area/newyo
 ```
 
 Exit codes: `0` ok · `1` crash · `2` bad usage · `3` blocked · `4` zero rows ·
-`5` remote API error · `6` partial. A run writes `<out>.meta.json` beside its
+`5` the content was never obtained (a navigation that timed out or came back
+empty, a dead or unauthenticated proxy, a remote API error) · `6` partial. A run writes `<out>.meta.json` beside its
 output recording the status, the stop reason and which batches failed; a
 **failed** run writes none, and leaves the previous good output in place.
 
 `diff_runs.py` compares two runs by `sku` and refuses to compare runs that are
-not both `complete`.
+not both `complete`, or that asked for different listings (area, category or
+filters in the URL); `--force` overrides either.
 
 ---
 
 ## Checks
 
 ```bash
-python3 smoke_test.py     # 653 checks, no network, no browser
+python3 smoke_test.py     # no network, no browser; prints PASS/FAIL per check
 pytest                    # the same suite, wrapped
 ```
 

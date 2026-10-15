@@ -2056,6 +2056,44 @@ def test_diff():
     ok &= check("a change that comes with a price_source change is separated out",
                 len(result.get("source_changed") or []) == 1
                 and len(result.get("changed") or []) == 0)
+
+    # Two runs of DIFFERENT listings share one hostname, one mode and often
+    # one currency here, because the area, the category and the filters all
+    # live in the URL. Diffed, every row is "added" or "removed". The sidecar
+    # records what each run asked for, and the diff compares it.
+    import argparse as _ap
+    import io as _io
+    import contextlib as _cl
+    import tempfile as _tf
+    def _run(tmp, name, start_url, walk=None):
+        rows = [dict(r.__dict__) for r in a]
+        path = os.path.join(tmp, name + ".json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+        meta = {"status": "complete", "mode": "listing", "start_url": start_url,
+                "pages_requested": 1, "pages_completed": 1}
+        if walk:
+            meta["walk"] = walk
+        with open(os.path.join(tmp, name + ".meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return path
+    with _tf.TemporaryDirectory() as tmp:
+        ny = "https://www.craigslist.org/search/area/newyork?cat=sss&min_price=0&max_price=25"
+        ny_reordered = "https://www.craigslist.org/search/area/newyork?max_price=25&cat=sss&min_price=0#search=1"
+        la = "https://www.craigslist.org/search/area/losangeles?cat=sss"
+        old = _run(tmp, "old", ny)
+        same = _run(tmp, "same", ny_reordered, walk={"1": {"hit_cap": True}})
+        other = _run(tmp, "other", la)
+        quiet = _io.StringIO()
+        with _cl.redirect_stdout(quiet):
+            refused = _diff._check_comparable(_ap.Namespace(old=old, new=other))
+            accepted = _diff._check_comparable(_ap.Namespace(old=old, new=same))
+        ok &= check("diff_runs refuses two runs of different listings "
+                    "(newyork band vs losangeles)", refused is False)
+        ok &= check("diff_runs accepts the same listing with its query "
+                    "parameters reordered and a fragment added", accepted is True)
+        ok &= check("diff_runs warns that a capped run holds a slice",
+                    "ceiling" in quiet.getvalue())
     return ok
 
 
@@ -2769,6 +2807,69 @@ def test_ci_checks_is_actually_wired_up():
                     % ("" if result.returncode == 0
                        else ": " + (result.stdout + result.stderr)[-300:]),
                     result.returncode == 0)
+    if os.path.exists(script):
+        ok &= _credential_scan_behaves(script)
+    return ok
+
+
+def _credential_scan_behaves(script):
+    """Run the real scan against planted trees, with its REPO pointed at them.
+
+    Three holes, each reproduced before it was closed:
+      * exclusions were tested against the ABSOLUTE path, so a clone under
+        any directory named `venv` or `.venv` scanned 0 files and passed;
+      * a scan that read nothing still printed "nothing credential-shaped";
+      * `.env.bak` and other copies of `.env` were never read.
+    """
+    import importlib.util as _ilu
+    import tempfile as _tf
+    ok = True
+    key = "ab" * 16
+    spec = _ilu.spec_from_file_location("_ci_checks_under_test", script)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def scan(repo):
+        mod.REPO = __import__("pathlib").Path(repo).resolve()
+        mod._VENV_CACHE.clear()
+        quiet = io.StringIO()
+        import contextlib as _cl
+        with _cl.redirect_stdout(quiet):
+            return mod.secret_check()
+
+    with _tf.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "venv", "x", "repo")
+        os.makedirs(repo)
+        with open(os.path.join(repo, "note.py"), "w") as f:
+            f.write("K = '%s'\n" % key)
+        failed = scan(repo)
+        ok &= check("the credential scan reads a clone that sits under a "
+                    "directory named venv", any("note.py" in l for l in failed))
+        os.remove(os.path.join(repo, "note.py"))
+        with open(os.path.join(repo, ".env.bak"), "w") as f:
+            f.write("TWOCAPTCHA_KEY=%s\n" % key)
+        failed = scan(repo)
+        ok &= check("the credential scan reads a .env backup",
+                    any(".env.bak" in l for l in failed))
+        os.remove(os.path.join(repo, ".env.bak"))
+        with open(os.path.join(repo, ".env"), "w") as f:
+            f.write("TWOCAPTCHA_KEY=%s\n" % key)
+        env_dir = os.path.join(repo, "myenv", "lib")
+        os.makedirs(env_dir)
+        with open(os.path.join(repo, "myenv", "pyvenv.cfg"), "w") as f:
+            f.write("home = /usr\n")
+        with open(os.path.join(env_dir, "vendored.py"), "w") as f:
+            f.write("# %s\n" % key)
+        failed = scan(repo)
+        ok &= check("the scan fails when it read nothing at all, rather than "
+                    "reporting a clean tree",
+                    any("0 files scanned" in l for l in failed))
+        with open(os.path.join(repo, "clean.py"), "w") as f:
+            f.write("x = 1\n")
+        failed = scan(repo)
+        ok &= check("and leaves .env itself and a virtualenv's contents alone%s"
+                    % ("" if not failed else ": " + "; ".join(failed[:2])),
+                    not failed)
     return ok
 
 
@@ -3154,7 +3255,7 @@ def test_parse_is_gated_on_the_policy():
     # engine parsed whatever reached the parse line, so the `parse` column
     # of STATE_POLICY decided nothing and an engine could disagree with the
     # table — and with its twins — without anything noticing. That is the
-    # defect CLAUDE.md §17 names for constants, with a function instead.
+    # defect as a policy constant nothing reads, with a function instead.
     #
     # Measured across the family on 2026-09-23 by counting definitions
     # against readers: 7 of 24 repos defined it and none called it.
@@ -3281,6 +3382,227 @@ def test_retries_is_validated_in_every_entry_point():
     return check("--retries is validated in every entry point, so 0 is a usage error", not problems)
 
 
+# The engines' fetch loop, driven for real with every driver stubbed out.
+#
+# Run in a SUBPROCESS so the stub driver modules never leak into this
+# process, and so it runs in every venv -- bare included -- rather than
+# skipping wherever a driver is absent. Two defects lived here, both
+# invisible to import, --help, compileall and every source-text check:
+#
+#   * the Selenium and pyppeteer copies called `pool.current` /
+#     `pool.advance` with no proxy pool configured (the default), so a
+#     blocked, unreached or unloadable page ended the run with exit 1;
+#   * the captcha handler runs twice per attempt and only the second call
+#     was counted, so one page bought 2 solves with no pool and 4-5 with a
+#     pool of four exits, against SOLVES_PER_PAGE = 1.
+_ENGINE_STUB_HARNESS = r'''
+import json, os, sys, tempfile, time, types
+from unittest import mock
+repo, engine = sys.argv[1], sys.argv[2]
+sys.path.insert(0, repo)
+
+def stub(name, **attrs):
+    m = types.ModuleType(name); m.__dict__.update(attrs); sys.modules[name] = m; return m
+class _E(Exception): pass
+stub("playwright"); stub("playwright.sync_api", sync_playwright=None, Error=type("Error",(Exception,),{}), TimeoutError=type("TimeoutError",(Exception,),{}))
+stub("selenium", webdriver=None); stub("selenium.webdriver"); stub("selenium.common")
+stub("selenium.common.exceptions", TimeoutException=type("TimeoutException",(Exception,),{}), WebDriverException=type("WebDriverException",(Exception,),{}), JavascriptException=type("JavascriptException",(Exception,),{}))
+for n in ("selenium.webdriver.chrome","selenium.webdriver.common","selenium.webdriver.support"): stub(n)
+stub("selenium.webdriver.chrome.options", Options=object); stub("selenium.webdriver.common.by", By=types.SimpleNamespace(CSS_SELECTOR="css"))
+stub("selenium.webdriver.support.ui", WebDriverWait=object)
+stub("pyppeteer", launch=None, connect=None)
+time.sleep = lambda s: None
+mod = __import__(engine)
+import page_flow
+
+URL = "https://www.craigslist.org/search/area/newyork?cat=sss"
+HTML = "<html><body>not a craigslist page</body></html>"
+
+def session(goto_error=None):
+    page = mock.MagicMock(); page.url = URL
+    page.goto.return_value = types.SimpleNamespace(status=429)
+    page.content.return_value = HTML
+    if goto_error is not None:
+        page.goto.side_effect = goto_error
+    s = mock.MagicMock(); s.page = page; s.javascript = False
+    drv = mock.MagicMock(); drv.page_source = HTML; drv.current_url = URL
+    if goto_error is not None:
+        drv.get.side_effect = goto_error
+    s.driver = drv
+    s.bridge = types.SimpleNamespace(run=lambda x: x)
+    return s
+
+class Pool:
+    def __init__(self, n): self.n = n; self.current = "http://h:1"; self.advanced = 0
+    def __len__(self): return self.n
+    def advance(self, why=""): self.advanced += 1
+    def rotates_per_page(self): return False
+
+def args():
+    tmp = tempfile.mkdtemp()
+    sys.argv = [engine, "--url", URL, "--out", os.path.join(tmp, "out")]
+    a = mod.parse_args()
+    a.twocaptcha_key = "stub"; a.retry_delay = 0; a.proxy_block_retries = 3
+    return a
+
+results = {}
+solves = []
+mod.solve_recaptcha = lambda *a, **k: solves.append(1) or "tok"
+mod.reconcile_detections = lambda *a, **k: types.SimpleNamespace(kind="recaptcha_v2", source="stub", sitekey="k", action=None)
+mod.detect_recaptcha_v3 = lambda *a, **k: None
+mod.detect_recaptcha_in_page = lambda *a, **k: None
+
+seen_status = []
+
+
+def _classify(state):
+    def classify(html=None, status=None, url=""):
+        seen_status.append(status)
+        return state
+    return classify
+
+
+CHALLENGE = mod.reconcile_detections
+
+
+def run(name, state, pool=None, goto_error=None, captcha=True):
+    del solves[:]
+    mod.reconcile_detections = CHALLENGE if captcha else (lambda *a, **k: None)
+    del seen_status[:]
+    page_flow.classify = _classify(state)
+    try:
+        out = mod._fetch_one_page(session(goto_error), args(), pool, 1, URL)
+        results[name] = {"ok": True, "state": getattr(out, "state", None),
+                         "load_failed": getattr(out, "load_failed", None),
+                         "solves": len(solves),
+                         "first_status": seen_status[0] if seen_status else None}
+    except Exception as e:  # noqa
+        results[name] = {"ok": False, "error": "%s: %s" % (type(e).__name__, e), "solves": len(solves)}
+
+run("blocked_no_pool", "blocked")
+run("unreached_no_pool", "unreached")
+run("challenge_no_pool", "challenge")
+run("blocked_pool4", "blocked", Pool(4))
+run("challenge_pool4", "challenge", Pool(4))
+nav_err = {"playwright_scraper": sys.modules["playwright.sync_api"].TimeoutError,
+           "selenium_scraper": sys.modules["selenium.common.exceptions"].TimeoutException,
+           "puppeteer_scraper": RuntimeError}[engine]("navigation failed")
+run("navfail_no_pool", "blocked", None, nav_err)
+run("status_429_no_captcha", "blocked", captcha=False)
+import contextlib, io
+cli = {}
+for flag, value in (("--pages", "0"), ("--delay", "-1"), ("--retry-delay", "-1"),
+                    ("--proxy-block-retries", "-1"), ("--concurrency", "0"),
+                    ("--retries", "0")):
+    sys.argv = [engine, "--url", URL, flag, value]
+    err = io.StringIO()
+    code = None
+    with contextlib.redirect_stderr(err):
+        try:
+            mod.parse_args()
+        except SystemExit as e:
+            code = e.code
+    named = any(l.startswith("usage:") is False and "error:" in l and flag in l
+                for l in err.getvalue().splitlines())
+    cli[flag] = {"exit": code, "named": named}
+print(json.dumps({"fetch": results, "cli": cli}))
+'''
+
+
+def test_fetch_loop_without_a_pool_and_within_the_solve_budget():
+    section("Fetch loop: no proxy pool, one paid solve per page, numeric flags")
+    ok = True
+    import json as _json
+    import subprocess as _subprocess
+    import tempfile as _tempfile
+    with _tempfile.TemporaryDirectory() as tmp:
+        harness = os.path.join(tmp, "harness.py")
+        with open(harness, "w", encoding="utf-8") as f:
+            f.write(_ENGINE_STUB_HARNESS)
+        for name in ENGINES:
+            module = name[:-3]
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+            proc = _subprocess.run([sys.executable, harness, REPO_ROOT, module],
+                                   capture_output=True, text=True, cwd=tmp,
+                                   env=env, timeout=120)
+            lines = [l for l in proc.stdout.splitlines() if l.startswith("{")]
+            ok &= check("%s: the stubbed fetch loop ran (exit %d)%s"
+                        % (module, proc.returncode,
+                           "" if lines else ": " + proc.stderr.strip()[-200:]),
+                        proc.returncode == 0 and bool(lines))
+            if not lines:
+                continue
+            payload = _json.loads(lines[-1])
+            results = payload["fetch"]
+            for flag, r in sorted(payload["cli"].items()):
+                ok &= check("%s %s %s is a usage error naming the flag "
+                            "(exit %r)" % (module, flag,
+                                           "0" if flag in ("--pages", "--concurrency", "--retries") else "-1",
+                                           r["exit"]),
+                            r["exit"] == 2 and r["named"])
+            for case, r in sorted(results.items()):
+                ok &= check("%s %s: no exception%s"
+                            % (module, case, "" if r["ok"] else " (" + r.get("error", "") + ")"),
+                            r["ok"])
+                ok &= check("%s %s: at most %d paid solve(s) for the page (got %d)"
+                            % (module, case, 1, r["solves"]),
+                            r["solves"] <= 1)
+            ok &= check("%s: a refused page with no pool is reported as blocked"
+                        % module,
+                        results.get("blocked_no_pool", {}).get("state") == "blocked")
+            ok &= check("%s: a navigation that never loads, with no pool, is "
+                        "reported as a failed load" % module,
+                        results.get("navfail_no_pool", {}).get("load_failed") is True)
+            if module != "selenium_scraper":
+                # Selenium's driver.get() returns nothing, so it has no status
+                # to pass; the other two must hand theirs to the classifier.
+                ok &= check("%s: the navigation's HTTP status reaches the "
+                            "classifier (got %r)" % (module,
+                            results.get("status_429_no_captcha", {}).get("first_status")),
+                            results.get("status_429_no_captcha", {}).get("first_status") == 429)
+    return ok
+
+
+def test_no_private_citations():
+    section("Wording: no citations of documents a reader cannot open")
+    ok = True
+    # Shipped files used to point at a private working file and at its
+    # numbered sections. Nobody outside can open it, so each such pointer
+    # reads as a reference into nothing; the rule has to be stated here, in
+    # this repo's own words. The tokens are assembled from pieces so this
+    # function does not match itself.
+    tokens = ("CLAUDE" + ".md", "claude_" + "2scraper", "2scraper_" + "repo_rules",
+              "play" + "book")
+    section_ref = re.compile(chr(0xA7) + r"+\s*\d")
+    suffixes = (".py", ".md", ".txt", ".yml", ".yaml", ".toml", ".example",
+                ".cfg", ".json", ".csv")
+    hits, scanned = [], 0
+    for root, dirs, files in os.walk(REPO_ROOT):
+        rel_root = os.path.relpath(root, REPO_ROOT)
+        dirs[:] = [d for d in dirs
+                   if d not in (".git", "__pycache__", "node_modules")
+                   and not os.path.exists(os.path.join(root, d, "pyvenv.cfg"))]
+        for fname in files:
+            if not (fname.endswith(suffixes) or fname == "Dockerfile"):
+                continue
+            path = os.path.join(root, fname)
+            try:
+                text = open(path, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            scanned += 1
+            rel = os.path.normpath(os.path.join(rel_root, fname))
+            for token in tokens:
+                if token.lower() in text.lower():
+                    hits.append("%s: %s" % (rel, token))
+            if section_ref.search(text):
+                hits.append("%s: a numbered section reference" % rel)
+    ok &= check("the citation scan read files (%d)" % scanned, scanned > 10)
+    ok &= check("no shipped file cites a private document%s"
+                % ("" if not hits else ": " + "; ".join(hits[:5])), not hits)
+    return ok
+
+
 def main():
     print("smoke_test.py -- craigslist-scraper")
     print("Zero network, zero browser. Fixtures are real captures, trimmed "
@@ -3334,6 +3656,8 @@ def main():
     ok &= test_balance_preflight()
     ok &= test_x_debug_header_is_redacted()
     ok &= test_scraper_api_sends_waitfor_as_an_object_and_reads_http_code()
+    ok &= test_fetch_loop_without_a_pool_and_within_the_solve_budget()
+    ok &= test_no_private_citations()
     ok &= test_engines(skips)
 
     print()

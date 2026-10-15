@@ -43,6 +43,7 @@ import pathlib
 import re
 import sys
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qsl, urlsplit
 
 from output_writer import UNIQUE_BY_SKU_MODES
 
@@ -241,6 +242,31 @@ def _run_status(path: str) -> Tuple[Optional[str], Optional[dict]]:
     return meta.get("status"), meta
 
 
+def _query_scope(url: Optional[str]) -> Optional[tuple]:
+    """What a run ASKED for: host, path and query parameters, order-free.
+
+    Craigslist's area is a path segment and its category and filters are
+    query parameters, so `/search/area/newyork?cat=sss&max_price=25` and
+    `/search/area/losangeles?cat=sss` are different listings that share one
+    hostname, one currency and one mode. Two runs of them diffed against
+    each other report every row as added or removed. The fragment is dropped:
+    the site rewrites it as it renders, and it does not change what was asked.
+    """
+    if not url:
+        return None
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = parts.path.rstrip("/") or "/"
+    return (host, path, tuple(sorted(parse_qsl(parts.query, keep_blank_values=True))))
+
+
+def _hit_cap(meta: Optional[dict]) -> bool:
+    walks = (meta or {}).get("walk") or {}
+    return any(isinstance(w, dict) and w.get("hit_cap") for w in walks.values())
+
+
 def _check_comparable(args) -> bool:
     """Refuse an assortment diff between runs that are not both complete.
 
@@ -253,10 +279,21 @@ def _check_comparable(args) -> bool:
     """
     problems = []
     modes = {}
+    scopes = {}
     for label, path in (("--old", args.old), ("--new", args.new)):
         status, meta = _run_status(path)
         if status is None:
             continue  # no sidecar: nothing to check, see _run_status
+        scope = _query_scope((meta or {}).get("start_url"))
+        if scope is not None:
+            scopes[label] = ((meta or {}).get("start_url"), scope)
+        if _hit_cap(meta):
+            # Not a refusal: the rows both runs saw are still comparable. But
+            # a capped run holds a slice of the listing, so `removed` here can
+            # mean "outside this run's slice" rather than "delisted".
+            print(f"[!] {label} ({path}) reached Craigslist's result ceiling: "
+                  f"its rows are a slice of the listing, so `removed` may "
+                  f"include adverts that were simply outside that slice.")
         mode = (meta or {}).get("mode")
         if mode:
             modes[label] = mode
@@ -276,6 +313,13 @@ def _check_comparable(args) -> bool:
                 f"{label} ({path}) was a {status!r} run — stopped after "
                 f"{meta.get('pages_completed')} of {meta.get('pages_requested')} "
                 f"page(s), reason {meta.get('stop_reason')!r}")
+    if len(scopes) == 2 and len({v[1] for v in scopes.values()}) > 1:
+        problems.append(
+            f"the two runs asked for different listings "
+            f"({scopes['--old'][0]} vs {scopes['--new'][0]}). The area, the "
+            f"category and every filter are part of the URL here, so "
+            f"`added`/`removed` would describe the change of question rather "
+            f"than the listing.")
     if len(set(modes.values())) > 1:
         problems.append(
             f"the two runs are different modes ({modes}). A listing row and a "
@@ -331,9 +375,9 @@ def _check_comparable(args) -> bool:
     print("[!] Refusing to diff these two runs:")
     for line in problems:
         print(f"      {line}")
-    print("    Re-run the incomplete side, or pass --force to compare anyway "
-          "(added/removed will include products that were simply never "
-          "fetched).")
+    print("    Re-run the incomplete side (or the same URL), or pass --force "
+          "to compare anyway (added/removed will include products that were "
+          "simply never fetched).")
     return False
 
 
@@ -359,8 +403,10 @@ def parse_args():
                         "for a cron job that should only notify on a real diff.")
     p.add_argument("--force", action="store_true",
                    help="Diff even when a run's .meta.json says it was partial "
-                        "or failed. Products never fetched by the short run will "
-                        "appear as added/removed.")
+                        "or failed, or when the two runs asked for different "
+                        "listings (area, category or filters in the URL). "
+                        "Products never fetched by one side will appear as "
+                        "added/removed.")
     return p.parse_args()
 
 
