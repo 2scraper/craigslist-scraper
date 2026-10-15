@@ -10,6 +10,8 @@ notes say so first, because nobody should discover that from their output.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-15
+
 > **Behaviour change:** `--retries 0` is now a usage error (exit 2). It used
 > to be accepted and made the page-load loop unreachable, so nothing was
 > fetched and the engine reported the browser's own blank page as a result:
@@ -41,6 +43,14 @@ notes say so first, because nobody should discover that from their output.
   an engine's own `extra` wins a collision. Not measured on live Craigslist
   data, so it is not claimed to fire today. `scraper_api_client.py` calls
   `save` without a sidecar and prints the count instead.
+- **A check for a statement the control flow can never reach.** The
+  undefined-name walk beside it cannot see this class by design: it pools
+  every binding in a file rather than tracking scopes, so a name used inside
+  dead code passes as long as anything else in the module binds it. The new
+  one is narrow — a statement after a `return`/`raise`/`break`/`continue` in
+  the SAME block — and measured across the eighteen repos of this family it
+  found six real problems and zero false positives. Verified by control:
+  appending `return 1` followed by a statement turns the suite red.
 
 ### Fixed
 
@@ -180,10 +190,6 @@ notes say so first, because nobody should discover that from their output.
 - `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
   that does not exist in this repo (it came with the copied core). Removed.
 
-## [0.1.3] — 2026-09-16
-
-### Fixed
-
 - **Fifteen lines of unreachable code removed from `playwright_scraper.py`.**
   A function's `def` line had been lost at some point before this repo's
   first commit, leaving its docstring and its `try: return page.content()`
@@ -191,17 +197,6 @@ notes say so first, because nobody should discover that from their output.
   can never arrive. Nothing called it — `_content_when_settled` below it
   does the job — so no behaviour changes. The same fifteen lines, byte for
   byte, were in six repos of this family.
-
-### Added
-
-- **A check for a statement the control flow can never reach.** The
-  undefined-name walk beside it cannot see this class by design: it pools
-  every binding in a file rather than tracking scopes, so a name used inside
-  dead code passes as long as anything else in the module binds it. The new
-  one is narrow — a statement after a `return`/`raise`/`break`/`continue` in
-  the SAME block — and measured across the eighteen repos of this family it
-  found six real problems and zero false positives. Verified by control:
-  appending `return 1` followed by a statement turns the suite red.
 
 ## [0.1.2] — 2026-09-14
 
