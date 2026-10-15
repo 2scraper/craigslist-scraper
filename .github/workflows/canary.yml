@@ -221,11 +221,14 @@ jobs:
           rows = json.load(open("canary_served.json"))
           fail = []
 
-          # Measured 2026-09-14: 353 rows for this URL from one served
-          # response, and 294-358 across the large-area captures.
-          if len(rows) < 250:
-              fail.append("only %d rows from one served response; 353 measured, "
-                          "294-358 across captures" % len(rows))
+          # How many results ONE served response holds varies with the hour:
+          # 353 on 2026-09-14, 294-358 across captures, and 243 at 06:49 UTC
+          # on 2026-10-15, when a floor of 250 went red with every row parsed
+          # (237 of 239 structured). The floor is there to catch a parser that
+          # reads a handful of rows or none, not the day's volume.
+          if len(rows) < 150:
+              fail.append("only %d rows from one served response; 243-358 "
+                          "measured" % len(rows))
 
           enriched = sum(1 for r in rows if r["price_source"] == "jsonld")
           share = 100.0 * enriched / len(rows) if rows else 0

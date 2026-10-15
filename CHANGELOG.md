@@ -82,7 +82,9 @@ notes say so first, because nobody should discover that from their output.
   alignment could go untested on a green badge). Every row must carry
   `sku`, `url` and `title`. The price-share floor of the walking run is 60%
   rather than 90%: 90% went red on 4 of 32 scheduled runs (79-90%) because of
-  the day's unpriced adverts, with a working parser.
+  the day's unpriced adverts, with a working parser. The served-batch row
+  floor is 150 rather than 250: one response held 243 rows at 06:49 UTC on
+  2026-10-15, every one parsed.
 - Shipped files no longer cite private working documents or their numbered
   sections, and a suite check keeps it that way.
 
