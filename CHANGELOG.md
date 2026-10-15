@@ -17,6 +17,18 @@ notes say so first, because nobody should discover that from their output.
 > script of yours passes 0, pass **1**: the flag counts ATTEMPTS, so 1 means
 > "try once and do not retry".
 
+> **Behaviour change:** `--pages 0`, `--concurrency 0`, and a negative
+> `--delay`, `--retry-delay` or `--proxy-block-retries` are now usage errors
+> (exit 2) in all three engines, and a negative `--retries` or
+> `--retry-delay` in `scraper_api_client.py`. They used to be accepted: a
+> negative delay raised mid-run, and a negative `--proxy-block-retries`
+> skipped every fetch.
+
+> **Behaviour change:** `diff_runs.py` now refuses (exit 2) to compare two
+> runs whose sidecars name different listings — a different area, category
+> or filter in the URL — because every row would read as added or removed.
+> `--force` compares them anyway.
+
 ### Added
 
 - **CSV cells that a spreadsheet would run as a formula are prefixed with an
@@ -31,6 +43,42 @@ notes say so first, because nobody should discover that from their output.
   `save` without a sidecar and prints the count instead.
 
 ### Fixed
+
+- **Selenium and pyppeteer no longer crash without a proxy.** With no
+  `--proxy` (the default), a page that came back refused or empty, and in
+  pyppeteer a page that never loaded, reached a retry branch that read the
+  proxy pool's current exit from a pool that did not exist, and the run
+  ended with exit 1 instead of 3 or 5. Both now re-fetch through the same
+  access path, as Playwright always did. Checked by driving each engine's
+  fetch loop with the driver stubbed out and no pool.
+- **At most one paid captcha solve per page, on every call site.** The
+  captcha handler runs once before a page is classified and once after, and
+  only the second call was counted, so the first one bought a solve on every
+  retry and every rotation: 2 with no pool and up to 5 with a pool of four
+  exits, against a limit of 1, with the solver stubbed. One per-page
+  allowance is now asked immediately before any purchase and is not reset by
+  a retry or a rotation. No challenge has ever been observed on Craigslist,
+  so this was latent.
+- **The navigation's HTTP status reaches the page classifier** in the
+  Playwright and pyppeteer engines. A refusal served with 403, 429 or 503
+  that still references the site's own assets used to read as "not painted
+  yet" and be waited on. Selenium's driver exposes no status.
+- **The credential scan could read nothing and report a clean tree.** Its
+  directory exclusions were matched against the absolute path, so a clone
+  under any directory named `venv` or `.venv` scanned 0 files and passed. It
+  now matches the path inside the repository, fails when it scanned nothing,
+  and also reads copies of `.env` (`.env.bak`, `.env.local`, ...) and JSON,
+  CSV and HTML files.
+- **README:** exit `5` means the content was never obtained (not only a
+  remote API error); `--concurrency` above 1 falls back to 1 with a warning
+  rather than being refused; `--locale` is Playwright-only; a living check
+  count was removed. The Scraper API client's `--wait-element` example and
+  its challenge message described another site.
+- **`.gitignore`** covers `--dump-html` page dumps of any name
+  (`*.page2`), a raw `.html` at the top of the tree, and scratch directories
+  by kind (`live/`, `out/`, `results/`, `tmp/`, ...).
+- Shipped files no longer cite private working documents or their numbered
+  sections, and a suite check keeps it that way.
 
 - **`--retries 0` fetched nothing and called it a result.** The load loop is
   `range(1, retries + 1)`, so 0 never runs it and the engine judged
@@ -191,7 +239,7 @@ notes say so first, because nobody should discover that from their output.
   diffed against a Toronto one.
 - `CONTRIBUTING.md` likewise still described the other site in eight places.
 - Three documents were referenced and absent: `TROUBLESHOOTING.md` (now
-  written), plus `FINDINGS.md` and `CLAUDE.md`, whose references were removed
+  written), plus two local working notes, whose references were removed
   — a local working file has no business being named by a published one.
 - `captcha_solver.get_balance` was referenced nowhere. Kept and given a
   consumer, because its error branch is the half nobody exercises: a wrong

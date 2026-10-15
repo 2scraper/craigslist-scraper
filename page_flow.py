@@ -408,6 +408,40 @@ BLOCK_RETRIES_WITHOUT_POOL = 1
 SOLVES_PER_PAGE = 1
 
 
+class SolveBudget:
+    """The per-page allowance of paid captcha solves.
+
+    Every engine calls its captcha handler twice per fetch attempt: once
+    before the page is classified (so a challenge is cleared before anything
+    is judged) and once after, for a state that says the page really is
+    gated. Counting only the second call left the first one unbounded, and it
+    runs again on every block retry and every rotation, so a page could buy
+    one solve per attempt. Measured with a stubbed solver before this class
+    existed: 2 purchases with no proxy pool and 4 with a pool of four exits,
+    against a limit of 1.
+
+    So ONE object is created per page, before the retry loop, and handed to
+    every call site. `spend()` is asked immediately before the purchase and
+    answers False once the allowance is used. It is never reset by a retry or
+    a rotation: a fresh exit is a reason to fetch again, not a fresh
+    allowance.
+    """
+
+    def __init__(self, limit: int = None):
+        self.limit = SOLVES_PER_PAGE if limit is None else int(limit)
+        self.spent = 0
+
+    def remaining(self) -> int:
+        return max(0, self.limit - self.spent)
+
+    def spend(self) -> bool:
+        """Claim one solve. False, and nothing claimed, once the limit is reached."""
+        if self.spent >= self.limit:
+            return False
+        self.spent += 1
+        return True
+
+
 # ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
@@ -512,3 +546,29 @@ def attempts(value) -> int:
             f"With 0 the load loop never runs, nothing is fetched, and the "
             f"engine reports the browser's blank page as a result.")
     return number
+
+
+# ---------------------------------------------------------------------------
+# Other numeric flags
+# ---------------------------------------------------------------------------
+def at_least(minimum, flag: str, cast=int):
+    """argparse `type=` that rejects a value below `minimum`, naming the flag.
+
+    A negative `--delay` makes `time.sleep` raise mid-run, a negative
+    `--proxy-block-retries` silently skips every fetch (`range(n + 1)` is
+    empty), and `--pages 0` asks for nothing and reports it as a result. Each
+    of those is a typo, and a usage error (exit 2) names it before anything
+    is launched.
+    """
+    def _check(value):
+        try:
+            number = cast(value)
+        except (TypeError, ValueError):
+            raise _argparse.ArgumentTypeError(
+                f"{flag} must be a number, not {value!r}")
+        if number != number or number < minimum:  # NaN fails too
+            raise _argparse.ArgumentTypeError(
+                f"{flag} must be at least {minimum}, not {value}")
+        return number
+    _check.__name__ = flag.lstrip("-").replace("-", "_")
+    return _check

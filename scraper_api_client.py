@@ -77,6 +77,7 @@ from product_parser import (parse_products, detect_bot_challenge,
                             detect_page_state, BOT_CHALLENGE_MARKERS)
 from output_writer import save
 import env_config
+import page_flow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scraper_api_client")
@@ -294,9 +295,10 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             vendor, len(html),
         )
         logger.error("A challenge page is not a final answer — retry before concluding "
-                     "anything (--retries). This site needs a rendered browser in the "
-                     "path: pass --cdp-url, or use playwright_scraper.py / "
-                     "puppeteer_scraper.py directly.")
+                     "anything (--retries). No challenge has been observed on "
+                     "Craigslist, so if this persists, compare with a browser "
+                     "engine (playwright_scraper.py) or route the fetch through "
+                     "a Scraping Browser session with --cdp-url.")
         return 3
 
     products = parse_products(html, args.url, category=args.category)
@@ -352,17 +354,17 @@ def parse_args():
                            "on protected sites — a DOM/load wait is satisfied instantly by "
                            "the challenge page itself.")
     wait.add_argument("--wait-element", default=None,
-                      help="Wait until this CSS selector is visible, e.g. 'a[href*=\"-item-\"]'")
+                      help="Wait until this CSS selector is visible, e.g. 'li.cl-static-search-result'")
     wait.add_argument("--wait-state", choices=["load", "domcontentloaded"], default=None,
                       help="Wait for a page load state instead of specific content")
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 products were parsed. Off by "
                         "default so a failed fetch can't overwrite a good result.")
-    p.add_argument("--retries", type=int, default=1,
+    p.add_argument("--retries", type=page_flow.at_least(0, "--retries"), default=1,
                    help="Extra attempts if a bot-challenge page comes back. One retry is "
                         "usually worth it. Each attempt is a separate billable task, so "
                         "this defaults to 1.")
-    p.add_argument("--retry-delay", type=int, default=10,
+    p.add_argument("--retry-delay", type=page_flow.at_least(0, "--retry-delay"), default=10,
                    help="Seconds between retries (default 10)")
     p.add_argument("--dump-html", default=None,
                    help="Also write the raw returned HTML to this path (always, even on success)")

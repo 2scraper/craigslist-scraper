@@ -19,7 +19,7 @@ this family.
 
 **The two views are not positionally aligned.** The first capture taken held
 296 entries in both, aligned perfectly, and building the join on that would
-have been the "junk-link data theft" failure of the family playbook in a new
+have been the classic "junk-link data theft" failure in a new
 costume -- every row after the first skipped entry wearing its neighbour's
 price and coordinates. Across 14 captures the counts differ almost everywhere
 (266 vs 294, 325 vs 350, 244 vs 355). What holds in all 14 without exception

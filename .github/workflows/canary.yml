@@ -89,7 +89,8 @@ jobs:
                echo "::error::this was written. The site was reachable, so this IS a"
                echo "::error::parser regression."
                exit 1 ;;
-            5) echo "::warning::Remote API error (exit 5). Nothing was tested."
+            5) echo "::warning::The content was never obtained (exit 5): a navigation that"
+               echo "::warning::timed out or came back empty. Nothing was tested."
                exit 1 ;;
             6) echo "::error::Partial run (exit 6) — see the sidecar's stop_reason."
                exit 1 ;;

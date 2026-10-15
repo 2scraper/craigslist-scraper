@@ -24,6 +24,26 @@ live_results.zip
 *_debug.html
 *_debug.png
 *.html.page*
+# `--dump-html X --pages 3` writes X.page2 and X.page3 whatever X is called,
+# and *.json does not cover `out.json.page3`.
+*.page[0-9]*
+# A raw page saved at the top of the tree. Nothing shipped is HTML.
+/*.html
+
+# --- working directories, by KIND rather than by one chosen name -----------
+# A capture or a run's output dropped into a scratch directory nobody listed
+# is one `git add -A` from a commit.
+live/
+out/
+output/
+result/
+results/
+run/
+runs/
+tmp/
+scratch/
+dump/
+dumps/
 
 # --- captures kept for parser work ---------------------------------------
 # The smoke suite's fixtures are committed (trimmed, inside smoke_test.py);
