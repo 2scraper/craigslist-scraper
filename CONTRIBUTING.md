@@ -87,7 +87,7 @@ history needs a decision, not a red check on every push.
 Then the rest of the presentation, in the order that matters:
 
 1. `python3 smoke_test.py` green, and the canary dispatched at least once.
-   Unlike its siblings this canary needs **no secret** and runs nightly:
+   Unlike its siblings this canary needs **no secret** and runs weekly (Mondays):
    Craigslist serves datacentre addresses, and a GitHub runner is one. It
    makes two live runs — a walking one for the rendered grid and a one-batch
    one for the served list — because a walking run alone never exercises the

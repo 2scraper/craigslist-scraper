@@ -1,4 +1,4 @@
-# One real run a day against craigslist.org.
+# One real run a week (Mondays) against craigslist.org.
 #
 # tests.yml (deliberately) never touches the site — see its own header. This
 # one does, because an offline suite cannot notice the site changing under it,
@@ -27,10 +27,6 @@ name: canary
 
 on:
   schedule:
-    - cron: "17 6 * * *"
-    # Mondays: the same jobs, WITH the paid secrets (proxy, Scraping Browser,
-    # captcha key). On the daily run above those secrets read as empty, so
-    # it takes the free no-secret route and bills nothing.
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
@@ -61,7 +57,7 @@ jobs:
       - name: Run
         id: run
         env:
-          CRAIGSLIST_PROXY: ${{ (github.event_name != 'schedule' || github.event.schedule == '17 6 * * 1') && secrets.CRAIGSLIST_PROXY || '' }}
+          CRAIGSLIST_PROXY: ${{ secrets.CRAIGSLIST_PROXY }}
         run: |
           # `set +e` because GitHub runs `run:` steps under `bash -e`: a
           # non-zero exit would abort the step BEFORE the line that captures
@@ -199,7 +195,7 @@ jobs:
       - name: Run again, one batch, for the served list
         id: served
         env:
-          CRAIGSLIST_PROXY: ${{ (github.event_name != 'schedule' || github.event.schedule == '17 6 * * 1') && secrets.CRAIGSLIST_PROXY || '' }}
+          CRAIGSLIST_PROXY: ${{ secrets.CRAIGSLIST_PROXY }}
         run: |
           set +e
           python playwright_scraper.py \
