@@ -36,7 +36,7 @@ that file is the bug report.
 This is the interesting one, because it has never been observed during this
 repo's development. Craigslist served a datacentre address in Germany the
 full New York listing, with no proxy and no key, on 2026-09-14 — and the
-nightly canary runs from a GitHub runner for the same reason.
+weekly (Monday) canary runs from a GitHub runner for the same reason.
 
 So exit 3 means something changed. The message names what was checked: the
 response was not built out of the site's own assets. That check is structural
