@@ -10,6 +10,12 @@ notes say so first, because nobody should discover that from their output.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary's optional paid secret `CRAIGSLIST_PROXY` now reaches it only on a new weekly
+  run (Mondays 06:17 UTC) and on a manual dispatch. The daily run keeps its
+  schedule and takes the free route without them, so it bills nothing.
+
 ## [0.2.0] — 2026-10-15
 
 > **Behaviour change:** `--retries 0` is now a usage error (exit 2). It used
