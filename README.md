@@ -1,4 +1,4 @@
-# craigslist-scraper
+# Craigslist Scraper — Classified Ads Across All Areas in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/craigslist-scraper?sort=semver)](https://github.com/2scraper/craigslist-scraper/releases)
 [![tests](https://github.com/2scraper/craigslist-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/craigslist-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines: Playwright · Selenium · pyppeteer](https://img.shields.io/badge/engines-Playwright%20%C2%B7%20Selenium%20%C2%B7%20pyppeteer-informational)](#engines)
 [![runs without an account](https://img.shields.io/badge/runs-without%20an%20account-success)](#do-i-need-anything-to-run-this)
+
+**Craigslist scraper** — an open-source (MIT) Python tool that reads Craigslist result lists and adverts across all 714 areas the site publishes and writes title, price, area, location and coordinates — plus body text and attributes per advert — to JSON or CSV. Measured on 2026-09-14, a datacentre address in Germany with no proxy and no key was served the full New York for-sale listing, and no challenge of any kind appeared. Use it to build a dataset of local listings and prices, or compare two runs with `diff_runs.py`.
 
 Reads Craigslist result lists and adverts into JSON or CSV, across all 714
 areas the site publishes. Three interchangeable browser engines, one row
@@ -312,6 +314,23 @@ identically to the untrimmed originals, with one advert's phone number and one
 broker's name and licence numbers replaced by placeholders that show.
 
 ---
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [dubizzle scraper](https://github.com/2scraper/dubizzle-scraper) — UAE classifieds — motors, property, electronics, jobs…
+- [Facebook Marketplace scraper](https://github.com/2scraper/facebook-marketplace-scraper) — Marketplace listings by keyword, category, location…
+- [MakeMyTrip scraper](https://github.com/2scraper/makemytrip-scraper) — Hotel prices with taxes and fees, ratings, stars…
+- [Skyscanner scraper](https://github.com/2scraper/skyscanner-scraper) — Route and dates in — every itinerary with price, airline…
+- [Spinny scraper](https://github.com/2scraper/spinny-scraper) — Used-car listings and car detail pages
+- [Vrbo scraper](https://github.com/2scraper/vrbo-scraper) — Vacation rental prices, ratings and property details…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Licence
 
